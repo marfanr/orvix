@@ -1,56 +1,26 @@
+// SPDX-FileCopyrightText: 2026 Mohammad Arfan
+//
+// SPDX-License-Identifier: AGPL-3.0
+
 use crate::models;
 use crate::models::room::Room;
+use crate::sfu::room_peer::RoomPeer;
 use crate::sfu::track::{Output, PublishedTrack};
 use axum::extract::ws::Message;
 use dashmap::DashMap;
 use rtc::rtp_transceiver::rtp_sender::{RTCRtpCodec, RtpCodecKind};
+use rtc::rtp_transceiver::{RTCRtpTransceiverDirection, RTCRtpTransceiverInit};
 use sonic_rs::Serialize;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::mpsc;
-use tracing::warn;
+use tracing::{info, warn};
 use uuid::Uuid;
 use webrtc::data_channel::DataChannel;
 use webrtc::peer_connection::PeerConnection;
 
 pub enum RoomMemberstype {
     Waiting,
-}
-
-pub struct RoomPeer {
-    pub user_id: Option<Uuid>,
-    pub username: Arc<str>,
-    pub ws_tx: Option<mpsc::Sender<Message>>,
-    pub pc: Arc<dyn PeerConnection>,
-    ctrl: Arc<dyn DataChannel>,
-}
-
-impl RoomPeer {
-    pub async fn new(
-        user_id: Option<Uuid>,
-        username: Arc<str>,
-        pc: Arc<dyn PeerConnection>,
-        ws_tx: Option<mpsc::Sender<Message>>,
-    ) -> Result<Arc<Self>, webrtc::error::Error> {
-        let ctrl = pc.create_data_channel("control", None).await?;
-
-        Ok(Arc::new(RoomPeer {
-            user_id,
-            username,
-            ws_tx,
-            pc,
-            ctrl,
-        }))
-    }
-
-    pub async fn send_control<T>(&self, msg: &T) -> Result<(), ()>
-    where
-        T: sonic_rs::Serialize + ?Sized,
-    {
-        let json = sonic_rs::to_string(msg).map_err(|_| ())?;
-        self.ctrl.send_text(json.as_str()).await.map_err(|_| ())?;
-        Ok(())
-    }
 }
 
 pub struct RoomSfu {
@@ -133,9 +103,14 @@ impl RoomSfu {
     }
 
     pub async fn set_track_active(&self, track: &PublishedTrack, active: bool) -> bool {
-        if track.active.swap(active, Ordering::Relaxed) == active {
+        let prev = track.active.swap(active, Ordering::Relaxed);
+        if prev == active {
             return false;
         }
+        warn!(
+            "set_track_active {prev} -> {active} publisher={} kind={}",
+            track.publisher, track.kind
+        );
 
         self.broadcast_control(
             track.publisher,
@@ -146,7 +121,7 @@ impl RoomSfu {
                 muted: !active,
             },
         )
-            .await;
+        .await;
 
         true
     }
@@ -156,28 +131,43 @@ impl RoomSfu {
         publisher: Uuid,
         kind: RtpCodecKind,
         codec: RTCRtpCodec,
+        rid: String,
+        ssrc: u32,
     ) -> Arc<PublishedTrack> {
-        let track = Arc::new(PublishedTrack::new(publisher, kind, codec));
-        self.tracks
-            .entry(publisher)
-            .or_default()
-            .push(track.clone());
+        let track = {
+            let mut entry = self.tracks.entry(publisher).or_default();
+
+            let existing = entry.iter().find(|t| t.kind == kind).cloned();
+
+            if let Some(t) = existing {
+                t
+            } else {
+                let new_track = Arc::new(PublishedTrack::new(publisher, kind, codec));
+                entry.push(new_track.clone());
+                new_track
+            }
+        };
+
+        let is_new_layer = !track.simulcast_layers.iter().any(|l| l.key() == &rid);
+        track.add_layer(rid, ssrc);
 
         if self.recording.load(Ordering::Relaxed) {
             let _ = crate::sfu::record::start_track_recording(self.id, &track).await;
         }
 
-        let subs: Vec<(Uuid, Arc<RoomPeer>)> = self
-            .peers
-            .iter()
-            .filter(|p| p.key() != &publisher)
-            .map(|p| (*p.key(), p.value().clone()))
-            .collect();
+        if is_new_layer {
+            let subs: Vec<(Uuid, Arc<RoomPeer>)> = self
+                .peers
+                .iter()
+                .filter(|p| p.key() != &publisher)
+                .map(|p| (*p.key(), p.value().clone()))
+                .collect();
 
-        for (id, peer) in subs {
-            if self.attach(&track, id, &peer).await {
-                renegotiate(&peer).await;
-                println!("renegotiate");
+            for (id, peer) in subs {
+                if self.attach(&track, id, &peer).await {
+                    renegotiate(&peer).await;
+                    println!("renegotiate");
+                }
             }
         }
         track
@@ -189,10 +179,32 @@ impl RoomSfu {
         }
         let (ssrc, track) = t.create_track_local();
 
-        let sender = match peer.pc.add_track(track.clone()).await {
+        let transceiver = match peer
+            .pub_pc
+            .add_transceiver_from_track(
+                track.clone(),
+                Some(RTCRtpTransceiverInit {
+                    direction: RTCRtpTransceiverDirection::Sendonly,
+                    ..Default::default()
+                }),
+            )
+            .await
+        {
             Ok(x) => x,
             Err(e) => {
-                println!("add_track to {sub_id}: {e}");
+                println!("add_transceiver to {sub_id}: {e}");
+                return false;
+            }
+        };
+
+        let sender = match transceiver.sender().await {
+            Ok(Some(s)) => s,
+            Ok(None) => {
+                println!("transceiver for {sub_id} has no sender");
+                return false;
+            }
+            Err(e) => {
+                println!("get sender for {sub_id}: {e}");
                 return false;
             }
         };
@@ -204,7 +216,8 @@ impl RoomSfu {
             sender,
         };
 
-        t.add_output(out);
+        t.add_output(out).await;
+        t.send_pli().await;
 
         self.send_track_state(sub_id, t).await;
         true
@@ -221,7 +234,7 @@ impl RoomSfu {
 
         for o in outs.iter() {
             if let Some(peer) = self.peers.get(&o.sub) {
-                if let Err(e) = peer.pc.remove_track(&o.sender).await {
+                if let Err(e) = peer.pub_pc.remove_track(&o.sender).await {
                     warn!("remove_track on {}: {e}", o.sub);
                 }
                 renegotiate(&peer).await;
@@ -237,7 +250,7 @@ impl RoomSfu {
                 muted: false,
             },
         )
-            .await;
+        .await;
     }
 
     pub fn broadcast(&self, conn_id: Uuid, msg: Message) -> Vec<Uuid> {
@@ -307,18 +320,40 @@ impl RoomSfu {
     }
 }
 
-/// send offer to client
+/// # renegotiate
+///
+/// renegotiation publisher to client
 pub async fn renegotiate(peer: &RoomPeer) {
-    let offer = match peer.pc.create_offer(None).await {
+    let offer = match peer.pub_pc.create_offer(None).await {
         Ok(o) => o,
-        Err(e) => return warn!("create_offer: {e}"),
+        Err(e) => {
+            warn!("create_offer skipped or failed (possible busy state): {e}");
+            return;
+        }
     };
-    if let Err(e) = peer.pc.set_local_description(offer).await {
+    if let Err(e) = peer.pub_pc.set_local_description(offer).await {
         return warn!("set_local_description: {e}");
     }
-    let Some(desc) = peer.pc.local_description().await else {
+    let Some(desc) = peer.pub_pc.local_description().await else {
         return;
     };
+
+    // debug
+    let sim: Vec<&str> = desc
+        .sdp
+        .lines()
+        .filter(|l| {
+            l.starts_with("m=")
+                || l.contains("rid:")
+                || l.contains("simulcast")
+                || l.starts_with("a=mid")
+                || l.starts_with("a=recvonly")
+                || l.starts_with("a=sendonly")
+                || l.starts_with("a=sendrecv")
+        })
+        .collect();
+    info!("offer to {}: {:#?}", peer.username, sim);
+
     // TODO: refactor
     // change from ws to control data channel
     let msg = sonic_rs::json!({ "type": "offer", "sdp": desc.sdp }).to_string();
