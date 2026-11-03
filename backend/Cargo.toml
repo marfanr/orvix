@@ -56,5 +56,5 @@ codegen-units = 1
 
 [profile.dev]
 incremental = true
-debug = 1
+debug = "line-tables-only"
 
