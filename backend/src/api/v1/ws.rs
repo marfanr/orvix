@@ -1,8 +1,13 @@
+// SPDX-FileCopyrightText: 2026 Mohammad Arfan
+//
+// SPDX-License-Identifier: AGPL-3.0
+
 use crate::api::WsError;
 use crate::api::server::ServerState;
 use crate::models;
+use crate::sfu::PeerType;
 use crate::sfu::peer::create_peer;
-use crate::sfu::room::{RoomPeer, RoomSfu};
+use crate::sfu::room::RoomSfu;
 use crate::utils::{AccessClaims, verify_jwt};
 use axum::Router;
 use axum::extract::ws::{Message, WebSocket};
@@ -18,6 +23,7 @@ use tokio::sync::mpsc;
 use tracing::{info, warn};
 use uuid::Uuid;
 use webrtc::peer_connection::{RTCIceCandidateInit, RTCSessionDescription};
+use crate::sfu::room_peer::RoomPeer;
 
 #[derive(Deserialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -39,6 +45,7 @@ enum WsMsg {
         sdp: String,
     },
     Candidate {
+        from: String,
         candidate: String,
         mid: Option<String>,
         line_index: Option<u16>,
@@ -140,13 +147,53 @@ impl WsMsg {
             None => username,
         };
 
-        let peer = create_peer(conn_id, room_arc.clone(), Some(self_sink.clone()))
-            .await
-            .map_err(|e| WsError(Arc::from(e.to_string())))?;
+        /// ```text
+        ///                 WebSocket (signaling: offer / answer / ice + `pc` field)
+        ///        +---------------------------------------------+
+        ///        |                                             |
+        ///   +---------+                                   +---------+
+        ///   | Browser |                                   |   SFU   |
+        ///   +---------+                                   +---------+
+        ///        |                                             |
+        ///        |  pubPc  (Publisher)                         |
+        ///        |  offer  ------------------------------->    |  browser offers
+        ///        |  <-------------------------------  answer   |  SFU only answers
+        ///        |  camera/mic RTP (simulcast q/h) ------->    |  -> on_track
+        ///        |                                             |
+        ///        |  subPc  (Subscriber)                        |
+        ///        |  <-------------------------------  offer    |  SFU offers
+        ///        |  answer  ------------------------------->   |  browser only answers
+        ///        |  <------ RTP of other peers (Output)        |  <- attach()
+        ///        |  <------ control channel (track_state)      |
+        /// ```
+        let pub_peer = create_peer(
+            conn_id,
+            room_arc.clone(),
+            Some(self_sink.clone()),
+            PeerType::PUBLISHER,
+        )
+        .await
+        .map_err(|e| WsError(Arc::from(format!("pub: {}", e.to_string()))))?;
 
-        let room_peer = RoomPeer::new(user_id, Arc::clone(&username), peer, Some(self_sink.clone()))
-            .await
-            .map_err(|e| WsError(Arc::from(e.to_string())))?;
+        let sub_peer = create_peer(
+            conn_id,
+            room_arc.clone(),
+            Some(self_sink.clone()),
+            PeerType::SUBSCRIBER,
+        )
+        .await
+        .map_err(|e| WsError(Arc::from(format!("sub: {}", e.to_string()))))?;
+
+        let room_peer = RoomPeer::new(
+            user_id,
+            Arc::clone(&username),
+            pub_peer,
+            sub_peer,
+            Some(self_sink.clone()),
+        )
+        .await
+        .map_err(|e| WsError(Arc::from(format!("room peer: {}", e.to_string()))))?;
+
         room.add_peer(conn_id, room_peer);
         state.conn_to_rooms.insert(conn_id, Arc::clone(&room_arc));
 
@@ -171,6 +218,7 @@ impl WsMsg {
         Ok(())
     }
 
+    /// Offering into subscriber pc
     async fn handle_offer(
         sdp: &str,
         conn_id: Uuid,
@@ -185,19 +233,21 @@ impl WsMsg {
             .peers
             .get(&conn_id)
             .ok_or_else(|| "peer not found in room".to_string())?;
-        let pc = Arc::clone(&peers.pc);
+        let sub_pc = Arc::clone(&peers.sub_pc);
 
         let offer = RTCSessionDescription::offer(sdp.to_owned())
             .map_err(|e| format!("parse offer: {e}"))?;
-        pc.set_remote_description(offer)
+        sub_pc
+            .set_remote_description(offer)
             .await
             .map_err(|e| format!("remote desc: {e}"))?;
 
-        let answer = pc
+        let answer = sub_pc
             .create_answer(None)
             .await
             .map_err(|e| format!("create answer: {e}"))?;
-        pc.set_local_description(answer.clone())
+        sub_pc
+            .set_local_description(answer.clone())
             .await
             .map_err(|e| format!("local desc: {e}"))?;
 
@@ -223,7 +273,7 @@ impl WsMsg {
             .peers
             .get(&conn_id)
             .ok_or_else(|| "peer not found in room".to_string())?;
-        let pc = Arc::clone(&peers.pc);
+        let pc = Arc::clone(&peers.pub_pc);
 
         let answer = RTCSessionDescription::answer(sdp.to_owned())
             .map_err(|e| format!("parse answer: {e}"))?;
@@ -271,92 +321,89 @@ async fn handle_socket(socket: WebSocket, _user_agent: String, state: ServerStat
 
     loop {
         tokio::select! {
-            incoming = stream.next() => {
-                match incoming {
-                    Some(Ok(Message::Close(_)) | Err(_)) | None => break,
-                    Some(Ok(Message::Text(msg))) => {
-                        match sonic_rs::from_slice::<WsMsg>(msg.as_bytes()) {
-                            Ok(WsMsg::Join { room, token, username }) => {
-                                if let Err(e) = WsMsg::handle_join(
-                                    room,
-                                    conn_id,token, username, &state, tx.clone()).await {
-                                    warn!("handle_join: {e}");
+                incoming = stream.next() => {
+                    match incoming {
+                        Some(Ok(Message::Close(_)) | Err(_)) | None => break,
+                        Some(Ok(Message::Text(msg))) => {
+                            match sonic_rs::from_slice::<WsMsg>(msg.as_bytes()) {
+                                Ok(WsMsg::Join { room, token, username }) => {
+                                    if let Err(e) = WsMsg::handle_join(
+                                        room,
+                                        conn_id,token, username, &state, tx.clone()).await {
+                                        warn!("handle_join: {e}");
+                                    }
                                 }
-                            }
-                            /// only forwarding the message from client
-                            Ok(WsMsg::AnswerRequest {conn_id, room_id}) => {
-                                if let Some(c) = state.ws_conn.get(&conn_id) {
-                                    /// allow entry into the room
-                                    answer_join(c.value(), true, conn_id).await.map_err(
-                                        |e| warn!("answer_join: {e}")
-                                    ).unwrap();
-
-                                    /// TODO: broadcast to all user on rooms that someone has joined this room
-                                    if let Some(room) = state.rooms.get(&room_id) {
-                                        sync_room_member(c.value(), &room, &conn_id).await.map_err(
-                                            |e| warn!("sync room member: {e}")
+                                /// only forwarding the message from client
+                                Ok(WsMsg::AnswerRequest {conn_id, room_id}) => {
+                                    if let Some(c) = state.ws_conn.get(&conn_id) {
+                                        /// allow entry into the room
+                                        answer_join(c.value(), true, conn_id).await.map_err(
+                                            |e| warn!("answer_join: {e}")
                                         ).unwrap();
 
-                                        let username = room.peers.get(&conn_id)
-                                            .map(|p| p.username.clone())
-                                            .unwrap_or(Arc::from("Anonymous"));
+                                        /// TODO: broadcast to all user on rooms that someone has joined this room
+                                        if let Some(room) = state.rooms.get(&room_id) {
+                                            sync_room_member(c.value(), &room, &conn_id).await.map_err(
+                                                |e| warn!("sync room member: {e}")
+                                            ).unwrap();
 
-                                        room.broadcast(conn_id, Message::text(
-                                            sonic_rs::json!({
-                                            "type": "welcome", "from": {"conn_id": conn_id, "username": username}})
-                                            .to_string(),
-                                        ));
+                                            let username = room.peers.get(&conn_id)
+                                                .map(|p| p.username.clone())
+                                                .unwrap_or(Arc::from("Anonymous"));
+
+                                            room.broadcast(conn_id, Message::text(
+                                                sonic_rs::json!({
+                                                "type": "welcome", "from": {"conn_id": conn_id, "username": username}})
+                                                .to_string(),
+                                            ));
+                                        };
                                     };
-                                };
-                            }
-                            Ok(WsMsg::Offer { sdp }) => {
-                                if let Err(e) = WsMsg::handle_offer(&sdp, conn_id, &state, tx.clone()).await {
-                                    warn!("handle_offer: {e}");
                                 }
-                            }
-                            Ok(WsMsg::Answer { sdp }) => {
-                                if let Err(e) = WsMsg::handle_answer(&sdp, conn_id, &state).await {
-                                    warn!("handle_answer: {e}");
-                                }
-                            }
-                            Ok(WsMsg::Candidate { candidate, line_index, mid, username_fragment }) => {
-                                info!("received candidate: {}", candidate);
-                                /// clone the peer connection out of the map before awaiting,
-                                /// holding a dashmap guard across an await point can deadlock
-                                let pc = {
-                                    let room = state.conn_to_rooms.get(&conn_id);
-                                    room.and_then(|room| {
-                                        room.peers
-                                            .get(&conn_id)
-                                            .map(|peer| Arc::clone(&peer.value().pc))
-                                    })
-                                };
-
-                                match pc {
-                                    Some(pc) => {
-                                        if let Err(e) = pc
-                                            .add_ice_candidate(RTCIceCandidateInit {
-                                                candidate,
-                                                sdp_mid: mid,
-                                                sdp_mline_index: line_index,
-                                                username_fragment,
-                                                url: None,
-                                            })
-                                            .await
-                                        {
-                                            warn!("add_ice_candidate: {e}");
-                                        }
+                                Ok(WsMsg::Offer { sdp }) => {
+                                    if let Err(e) = WsMsg::handle_offer(&sdp, conn_id, &state, tx.clone()).await {
+                                        warn!("handle_offer: {e}");
                                     }
-                                    None => warn!("candidate before pc exists"),
                                 }
+                                Ok(WsMsg::Answer { sdp }) => {
+                                    if let Err(e) = WsMsg::handle_answer(&sdp, conn_id, &state).await {
+                                        warn!("handle_answer: {e}");
+                                    }
+                                }
+                                Ok(WsMsg::Candidate {from ,candidate, line_index, mid, username_fragment }) => {
+                                    /// clone the peer connection out of the map before awaiting,
+                                    /// holding a dashmap guard across an await point can deadlock
+                                    let pc = state.conn_to_rooms.get(&conn_id).and_then(|room| {
+                                        room.peers.get(&conn_id).map(|peer| match from.as_str() {
+                                            "PUBLISHER" => Arc::clone(&peer.sub_pc),
+                                            _ => Arc::clone(&peer.pub_pc),
+                                        })
+                                    });
+
+                                    match pc {
+                                        Some(pc) => {
+                                            if let Err(e) = pc
+                                                .add_ice_candidate(RTCIceCandidateInit {
+                                                    candidate,
+                                                    sdp_mid: mid,
+                                                    sdp_mline_index: line_index,
+                                                    username_fragment,
+                                                    url: None,
+                                                })
+                                                .await
+                                            {
+                                                warn!("add_ice_candidate: {e}");
+                                            }
+                                        }
+                                        None => warn!("candidate before pc exists"),
+                                    }
+                                }
+                                Ok(WsMsg::Leave) => break,
+                                Err(e) => warn!("bad ws msg: {e}"),
                             }
-                            Ok(WsMsg::Leave) => break,
-                            Err(e) => warn!("bad ws msg: {e}"),
                         }
+                        Some(Ok(_)) => {}
                     }
-                    Some(Ok(_)) => {}
                 }
-            }
 
             outgoing = rx.recv() => {
                 match outgoing {
@@ -384,8 +431,8 @@ async fn handle_socket(socket: WebSocket, _user_agent: String, state: ServerStat
         room.broadcast(
             conn_id,
             Message::text(
-                sonic_rs::json!({
-                    "type": "disconnect", "conn_id": conn_id, "username": username
+                sonic_rs::json !({
+                "type": "disconnect", "conn_id": conn_id, "username": username
                 })
                 .to_string(),
             ),
