@@ -41,6 +41,12 @@ export interface ChatMessage {
   outgoing: boolean
 }
 
+export interface NewMessageEvent {
+  eventId: number
+  sender: string
+  text: string
+}
+
 export enum SupportedVideoCodec {
   H264 = 'H264',
   VP8 = 'VP8',

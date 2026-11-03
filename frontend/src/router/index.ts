@@ -67,7 +67,7 @@ router.beforeEach(async (to) => {
     ? String(titleFromParams)
     : String(to.meta?.title || 'Default Title')
 
-  document.title = `${title} | VidCall`
+  document.title = `${title} | Orvix`
 
   return true
 })

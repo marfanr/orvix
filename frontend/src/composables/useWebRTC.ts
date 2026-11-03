@@ -1,9 +1,6 @@
 import { ref } from 'vue'
-import { SupportedBitrate, SupportedVideoCodec } from '@/types/video-call.ts'
-import {
-  useMeetingConfig,
-  type MeetingConfigContext,
-} from '@/composables/useMeetingConfig.ts'
+import { SupportedVideoCodec } from '@/types/video-call.ts'
+import { useMeetingConfigStore } from '@/stores/meetingConfig'
 
 export type DataControlType = string | Blob | ArrayBuffer
 
@@ -11,13 +8,13 @@ export function useWebRTC(
   send: (obj: unknown) => unknown,
   onTrack?: (e: RTCTrackEvent) => void,
   handleControl?: (c: MessageEvent) => void,
-  meetingConfig?: MeetingConfigContext,
+  handleIncomingChat?: (msg: string, from: string, timestamp: number) => void,
 ) {
   const debug = (...args: unknown[]) => {
     if (import.meta.env.DEV) console.log(...args)
   }
 
-  const form = meetingConfig?.form ?? useMeetingConfig().form
+  const form = useMeetingConfigStore().form
 
   const remoteVideoRef = ref<HTMLVideoElement | null>(null)
 
@@ -29,6 +26,9 @@ export function useWebRTC(
 
   const localTracksAudio = ref<RTCRtpSender | null>(null)
   const controlChannel = ref<RTCDataChannel | null>(null)
+  const chatChannelPub = ref<RTCDataChannel | null>(null)
+  const chatChannelSub = ref<RTCDataChannel | null>(null)
+
   const pendingMessageControlCh: DataControlType[] = []
 
   const pendingCandidates: RTCIceCandidateInit[] = []
@@ -50,7 +50,7 @@ export function useWebRTC(
   const init = async () => {
     if (PublisherPeerCon.value) return
 
-    const iceServers: RTCIceServer[] = [{ urls: "stun:stun.l.google.com:19302" }]
+    const iceServers: RTCIceServer[] = [{ urls: 'stun:stun.l.google.com:19302' }]
 
     const pub_pc = new RTCPeerConnection({
       iceServers,
@@ -65,6 +65,9 @@ export function useWebRTC(
     SubscriberPeerCon.value = sub_pc
 
     controlChannel.value ??= pub_pc.createDataChannel('control')
+    chatChannelPub.value ??= pub_pc.createDataChannel('chat', { id: 1, negotiated: true })
+    chatChannelSub.value ??= sub_pc.createDataChannel('chat', { id: 1, negotiated: true })
+
     controlChannel.value.onopen = () => {
       debug('WebRTC connected')
       while (pendingMessageControlCh.length > 0 && controlChannel.value?.readyState === 'open') {
@@ -77,6 +80,12 @@ export function useWebRTC(
           break
         }
       }
+    }
+
+    chatChannelSub.value!.onmessage = (msg) => {
+      const msg_data = JSON.parse(msg.data)
+      console.log("found new msg: ", msg.data, msg.timeStamp)
+      handleIncomingChat!(msg_data.msg, msg_data.from, msg_data.time)
     }
 
     const isIPv6 = (c: RTCIceCandidate) => {
@@ -183,45 +192,50 @@ export function useWebRTC(
     }
   }
 
-  const preferCodec = (pc: RTCPeerConnection, codec: SupportedVideoCodec, kind: string = 'video',): void => {
+  const preferCodec = (
+    pc: RTCPeerConnection,
+    codec: SupportedVideoCodec,
+    kind: string = 'video',
+  ): void => {
+    codec ??= SupportedVideoCodec.VP9
     console.log(`sellected = ${kind}/${codec.toString()}`)
     if (typeof RTCRtpSender.getCapabilities !== 'function') return
 
     const codecs = RTCRtpSender.getCapabilities(kind)?.codecs ?? []
-    // console.log(codecs)
-    const h264 = codecs.filter(
+
+    const sellectedCodec = codecs.filter(
       (c) => c.mimeType.toLowerCase() === `${kind}/${codec.toString().toLowerCase()}`,
     )
-    if (h264.length === 0) {
+    if (sellectedCodec.length === 0) {
       console.warn(`${kind}/${codec.toString()} is not available, recording will not work`)
       return
     }
 
-    let maxBitrate = 2_000_000;
-    switch (form.maxBitrate) {
-      case SupportedBitrate.AUTO:
-        maxBitrate = 2_000_000;
-        break;
-      case SupportedBitrate.B1:
-        maxBitrate = 1_000_000;
-        break;
-      case SupportedBitrate.B2:
-        maxBitrate = 2_000_000;
-        break;
-      case SupportedBitrate.B4:
-        maxBitrate = 4_000_000;
-        break;
-      case SupportedBitrate.B8:
-        maxBitrate = 8_000_000;
-        break;
-    }
+    let maxBitrate = 2_000_000
+      switch (form.maxBitrate) {
+        case 'auto':
+          maxBitrate = 2_000_000
+          break
+        case '1':
+          maxBitrate = 1_000_000
+          break
+        case '2':
+          maxBitrate = 2_000_000
+          break
+        case '4':
+          maxBitrate = 4_000_000
+          break
+        case '8':
+          maxBitrate = 8_000_000
+          break
+      }
     for (const s of pc.getSenders()) {
       const p = s.getParameters()
       if (p.encodings.length == 0) continue
-        for (let i = 0; i < p.encodings.length; i++) {
-          p.encodings[i]!.maxBitrate = maxBitrate
-          p.encodings[i]!.networkPriority = 'high'
-        }
+      for (let i = 0; i < p.encodings.length; i++) {
+        p.encodings[i]!.maxBitrate = maxBitrate
+        p.encodings[i]!.networkPriority = form.networkPriority
+      }
       s.setParameters(p).then()
     }
 
@@ -230,7 +244,7 @@ export function useWebRTC(
       if (kind !== 'video') continue
 
       try {
-        transceiver.setCodecPreferences(h264)
+        transceiver.setCodecPreferences(sellectedCodec)
       } catch (err) {
         console.warn('setCodecPreferences failed', err)
       }
@@ -304,6 +318,13 @@ export function useWebRTC(
     _sendDataControl(msg)
   }
 
+  const sendChat = <T extends DataControlType>(msg: T): void => {
+    const channel = chatChannelPub.value!
+    if (typeof msg === 'string') channel.send(msg)
+    else if (msg instanceof Blob) channel.send(msg)
+    else channel.send(msg)
+  }
+
   const close = () => {
     controlChannel.value?.close()
     PublisherPeerCon.value?.close()
@@ -335,5 +356,6 @@ export function useWebRTC(
     localTracksVideo,
     localTracksAudio,
     sendDataControl,
+    sendChat,
   }
 }

@@ -1,50 +1,40 @@
-import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, watch } from 'vue'
+import { storeToRefs } from 'pinia'
 import { api } from '@/lib/axios'
 import { useAuthStore } from '@/stores/auth'
-import type { MemberChanges, Participant, RoomStatus } from '@/types/video-call'
-import { useJoinRequests } from './useJoinRequests'
+import { useCallStore } from '@/stores/call'
+import { useNotifySound } from '@/lib/audio'
 import { useLocalMedia } from './useLocalMedia'
-import { useReactions } from './useReactions'
 import { useSignaling } from './useSignaling'
 import { useWebRTC } from './useWebRTC'
-import type { MeetingConfigContext } from './useMeetingConfig'
 
-interface RoomState {
-  id: string | undefined
-  owner: string | undefined
-  status: RoomStatus
-  title: string
-}
+export function useVideoCallRoom(getRoomParam: () => string | string[] | undefined) {
+  const callStore = useCallStore()
+  const {
+    room,
+    participants,
+    chatMessages,
+    floating,
+    joinRequests,
+    currentRequest,
+    remainingRequests,
+    memberChangesData,
+    newMessageData,
+  } = storeToRefs(callStore)
 
-export function useVideoCallRoom(
-  getRoomParam: () => string | string[] | undefined,
-  meetingConfig?: MeetingConfigContext,
-) {
   let participantSeq = 0
-  const participants = ref<Participant[]>([
-    {
-      id: participantSeq,
-      conn_id: undefined,
-      name: 'me',
-      muted: true,
-      cameraOff: true,
-      stream: null,
-    },
-  ])
 
-  const room = reactive<RoomState>({
-    id: undefined,
-    owner: undefined,
-    title: 'Untitled room',
-    status: 'loading',
-  })
-
-  const reactions = useReactions()
   const signaling = useSignaling()
-  const requests = useJoinRequests({
-    getRoomId: () => room.id,
-    answerRequest: signaling.answerRequest,
-  })
+  const notifySound = useNotifySound()
+
+  // play a sound when the first join request arrives
+  watch(
+    () => joinRequests.value.length,
+    (len, prev) => {
+      if (prev === 0 && len > 0) notifySound.play()
+    },
+  )
+
   const onRemoteTrack = (e: RTCTrackEvent) => {
     console.log('new track', e)
 
@@ -52,36 +42,34 @@ export function useVideoCallRoom(
     const streamId = stream.id
     console.log('onRemoteTrack event:', e.track.kind, e.streams, streamId)
     const target =
-      participants.value.find((p) => p.conn_id && streamId.includes(p.conn_id)) ??
-      participants.value.find((p) => p.id !== 0)
+      callStore.participants.find((p) => p.conn_id && streamId.includes(p.conn_id)) ??
+      callStore.participants.find((p) => p.id !== 0)
 
     if (!target) {
       console.warn('Track diterima untuk user yang tidak dikenal, abaikan.', streamId)
-      return // DILARANG KERAS menggunakan fallback ke (p.id !== 0) !
+      return
     }
 
-    if (target) {
-      if (target.stream) {
-        target.stream.addTrack(e.track)
-        target.stream = new MediaStream(target.stream.getTracks())
-      } else {
-        target.stream = stream
-      }
+    if (target.stream) {
+      target.stream.addTrack(e.track)
+      target.stream = new MediaStream(target.stream.getTracks())
+    } else {
+      target.stream = stream
+    }
+    if (e.track.kind === 'video') {
+      target.cameraOff = false
+    }
+    if (e.track.kind === 'audio') {
+      target.muted = false
+    }
+    e.track.onended = () => {
       if (e.track.kind === 'video') {
-        target.cameraOff = false
+        target.cameraOff = true
       }
       if (e.track.kind === 'audio') {
-        target.muted = false
+        target.muted = true
       }
-      e.track.onended = () => {
-        if (e.track.kind === 'video' && target) {
-          target.cameraOff = true
-        }
-        if (e.track.kind === 'audio' && target) {
-          target.muted = true
-        }
-        console.log('ended track')
-      }
+      console.log('ended track')
     }
   }
 
@@ -89,15 +77,15 @@ export function useVideoCallRoom(
     const data = JSON.parse(c.data)
     switch (data.type) {
       case 'track_state': {
-        const target = participants.value.find((p) => p.conn_id === data.from)
+        const target = callStore.participants.find((p) => p.conn_id === data.from)
         if (target && data.kind === 'video') target.cameraOff = data.muted
         if (target && data.kind === 'audio') target.muted = data.muted
         console.log('track state updated : ', target?.cameraOff, target?.muted)
         break
       }
       case 'track_ended': {
-        const target = participants.value.find((p) => p.conn_id === c.data.from)
-        if (target && c.data.kind === 'video') {
+        const target = callStore.participants.find((p) => p.conn_id === data.from)
+        if (target && data.kind === 'video') {
           target.cameraOff = true
           target.stream?.getVideoTracks().forEach((t) => t.stop())
         }
@@ -106,15 +94,22 @@ export function useVideoCallRoom(
     }
   }
 
-  const webrtc = useWebRTC(signaling.send, onRemoteTrack, handleControlChannel, meetingConfig)
+  const handleIncomingChat = (msg: string, from: string, timestamp: number) => {
+    callStore.pushChat(msg, from, false, timestamp)
+    callStore.addNewMessage(msg, from)
+  }
+
+  const webrtc = useWebRTC(
+    signaling.send,
+    onRemoteTrack,
+    handleControlChannel,
+    handleIncomingChat,
+  )
   const media = useLocalMedia(participants)
 
-  // welcome members
-  let welcomeSeq = 0
-  const memberChangesStore = ref<MemberChanges[]>([])
-  const memberChangesData = computed(() => memberChangesStore.value[0])
-  const resolveNewMembers = () => {
-    memberChangesStore.value.shift()
+  const sendChat = (msg: string, target: string) => {
+    callStore.pushChat(msg, 'me', true, Date.now())
+    webrtc.sendChat(JSON.stringify({ msg: msg, target: target, time: Date.now() }))
   }
 
   const cameraOff = computed(() => media.getMe()?.cameraOff ?? true)
@@ -155,11 +150,16 @@ export function useVideoCallRoom(
     const stream = media.getMe()?.stream
     if (!stream) return
 
-    webrtc.addLocalStream(stream)
+    await webrtc.addLocalStream(stream)
     await renegotiate()
   }
 
-  watch(() => room.status === 'joined', onJoinedRoom)
+  watch(
+    () => room.value.status === 'joined',
+    (joined, prevJoined) => {
+      if (joined && !prevJoined) void onJoinedRoom()
+    },
+  )
 
   signaling.onMessage(async (msg) => {
     let type: string | undefined
@@ -170,24 +170,21 @@ export function useVideoCallRoom(
 
       switch (data.type) {
         case 'reaction':
-          if (typeof data.emoji === 'string') reactions.showReaction(data.emoji)
+          if (typeof data.emoji === 'string') callStore.showReaction(data.emoji)
           break
 
         case 'join':
-          if (data.accept) room.status = 'joined'
-          else if (room.status !== 'joined') room.status = 'denied'
+          if (data.accept) callStore.room.status = 'joined'
+          else if (callStore.room.status !== 'joined') callStore.room.status = 'denied'
           webrtc.sendDataControl('test')
           break
 
         // synchronize current members
-        case 'sync':
+        case 'sync': {
           console.log(data)
-          const members: {
-            conn_id: string
-            username: string
-          }[] = data.members
+          const members: { conn_id: string; username: string }[] = data.members
           members.forEach((v) => {
-            participants.value.push({
+            callStore.upsertParticipant({
               id: ++participantSeq,
               conn_id: v.conn_id,
               name: v.username,
@@ -196,12 +193,12 @@ export function useVideoCallRoom(
               stream: null,
             })
           })
-
           break
+        }
 
         case 'request': {
           const { username, conn_id } = data.from
-          requests.addRequest({ username, conn_id })
+          callStore.addJoinRequest({ username, conn_id })
           break
         }
 
@@ -232,40 +229,27 @@ export function useVideoCallRoom(
         case 'welcome': {
           const { username, conn_id } = data.from
 
-          memberChangesStore.value.push({
-            eventId: ++welcomeSeq,
-            username,
-            type: 'join',
+          callStore.addMemberChange(username, 'join')
+          callStore.upsertParticipant({
+            id: ++participantSeq,
+            conn_id,
+            name: username,
+            muted: true,
+            cameraOff: true,
+            stream: null,
           })
-
-          if (!participants.value.some((p) => p.conn_id === conn_id)) {
-            participants.value.push({
-              id: ++participantSeq,
-              conn_id,
-              name: username,
-              muted: true,
-              cameraOff: true,
-              stream: null,
-            })
-          }
           break
         }
 
         // guest disconnect
         // TODO: not handled on backend
         case 'request_cancel':
-          requests.cancelRequest(data.conn_id)
+          callStore.cancelJoinRequest(data.conn_id)
           break
 
         case 'disconnect': {
-          const idx = participants.value.findIndex((p) => p.conn_id === data.conn_id)
-          if (idx !== -1) participants.value.splice(idx, 1)
-
-          memberChangesStore.value.push({
-            eventId: ++welcomeSeq,
-            username: data.username,
-            type: 'leave',
-          })
+          callStore.removeParticipant(data.conn_id)
+          callStore.addMemberChange(data.username, 'leave')
           break
         }
       }
@@ -274,8 +258,18 @@ export function useVideoCallRoom(
     }
   })
 
+  const resolveRequest = (type: 'admit' | 'deny') => {
+    const req = callStore.currentRequest
+    if (!req) return
+    // TODO!: handle deny
+    if (type === 'admit') {
+      signaling.answerRequest(callStore.room.id, req.conn_id)
+    }
+    callStore.shiftJoinRequest()
+  }
+
   const hangup = () => {
-    signaling.leave(room.id)
+    signaling.leave(callStore.room.id)
     webrtc.close()
   }
 
@@ -286,22 +280,22 @@ export function useVideoCallRoom(
       await webrtc.init()
     } catch (error) {
       console.error('webrtc init failed:', error)
-      room.status = 'not-found'
+      callStore.room.status = 'not-found'
       return
     }
 
     try {
       const res = await api.get(`/room/${getRoomParam()}`)
-      room.id = res.data.id
-      room.owner = res.data.owner
-      room.status = res.data.is_started ? 'waiting' : 'not-started'
-      room.title = res.data.title ?? 'Untitled room'
+      callStore.room.id = res.data.id
+      callStore.room.owner = res.data.owner
+      callStore.room.status = res.data.is_started ? 'waiting' : 'not-started'
+      callStore.room.title = res.data.title ?? 'Untitled room'
 
       await media.init()
 
       signaling.join(res.data.id, auth.accessToken)
     } catch (error) {
-      room.status = 'not-found'
+      callStore.room.status = 'not-found'
       console.error(error)
     }
   })
@@ -311,20 +305,26 @@ export function useVideoCallRoom(
   })
 
   return {
+    // refs (state) — from the store
     participants,
     room,
-    cameraOff,
-    floating: reactions.floating,
-    currentRequest: requests.currentRequest,
-    remainingRequests: requests.remainingRequests,
-    showReaction: reactions.showReaction,
-    resolveRequest: requests.resolveRequest,
+    chatMessages,
+    floating,
+    currentRequest,
+    remainingRequests,
+    memberChangesData,
+    newMessageData,
+    // actions / orchestration
+    showReaction: callStore.showReaction,
+    resolveRequest,
+    resolveNewMembers: callStore.resolveMemberChange,
+    resolveNewMessage: callStore.resolveNewMessage,
     toggleCamera,
     toggleMic,
+    cameraOff,
     muted,
     hangup,
-    memberChangesData,
-    resolveNewMembers,
     sendControl: webrtc.sendDataControl,
+    sendChat,
   }
 }
