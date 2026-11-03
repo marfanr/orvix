@@ -14,6 +14,7 @@ import {
   UsersIcon,
   VideoIcon,
   XIcon,
+  WebcamIcon
 } from 'lucide-vue-next'
 import { nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { nanoid } from 'nanoid'
@@ -247,12 +248,12 @@ const menuItemCls =
             class="grid size-9 place-items-center rounded-xl bg-primary text-white shadow-sm"
             aria-hidden="true"
           >
-            <VideoIcon class="size-5" />
+            <WebcamIcon class="size-5" />
           </span>
           <span
             class="hidden font-heading text-lg font-semibold tracking-tight text-gray-900 sm:block"
           >
-            VidCall
+            Orvix
           </span>
         </div>
 
