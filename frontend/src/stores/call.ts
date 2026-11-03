@@ -94,7 +94,6 @@ export const useCallStore = defineStore('call', () => {
     newMessages.value.shift()
   }
 
-  // --- Join Requests ---
   const joinRequests = ref<JoinRequest[]>([])
   const currentRequest = computed(() => joinRequests.value[0])
   const remainingRequests = computed(() => joinRequests.value.length - 1)

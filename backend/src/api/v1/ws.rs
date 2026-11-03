@@ -8,6 +8,7 @@ use crate::models;
 use crate::sfu::PeerType;
 use crate::sfu::peer::create_peer;
 use crate::sfu::room::RoomSfu;
+use crate::sfu::room_peer::RoomPeer;
 use crate::utils::{AccessClaims, verify_jwt};
 use axum::Router;
 use axum::extract::ws::{Message, WebSocket};
@@ -18,12 +19,13 @@ use futures_util::{TryFutureExt, sink::SinkExt, stream::StreamExt};
 use http::header::{ORIGIN, USER_AGENT};
 use http::{HeaderMap, StatusCode};
 use serde::Deserialize;
+use sonic_rs::JsonValueTrait;
 use std::sync::Arc;
+use dashmap::Entry;
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 use uuid::Uuid;
 use webrtc::peer_connection::{RTCIceCandidateInit, RTCSessionDescription};
-use crate::sfu::room_peer::RoomPeer;
 
 #[derive(Deserialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -191,7 +193,7 @@ impl WsMsg {
             pub_peer,
             sub_peer,
             Some(self_sink.clone()),
-            Arc::clone(&room_arc)
+            Arc::clone(&room_arc),
         )
         .await
         .map_err(|e| WsError(Arc::from(format!("room peer: {}", e.to_string()))))?;
@@ -203,8 +205,32 @@ impl WsMsg {
         /// if owner directy enter the room
         if user_id == Some(room.owner_id) {
             answer_join(&self_sink, true, conn_id).await?;
+            tracing::info!("Owner joined , current member room : {}", room.peers.len());
+
+            // resend sync into self and each member
+            _ = sync_room_member(&self_sink, &room, &conn_id).await.map_err(
+                |e| warn!("sync room member: {e}")
+            );
+
+            for m in room.peers.iter() {
+                let Some(ws) = m.ws_tx.clone() else {continue};
+                _ = sync_room_member(&ws, &room, &m.key()).await.map_err(
+                    |e| warn!("sync room member: {e}")
+                );
+            }
+
+            state
+                .broadcast_to_waiting_room(
+                    room_id,
+                    Message::text(sonic_rs::json!({"type":"notify"}).to_string()),
+                )
+                .await;
+
             return Ok(());
         }
+
+        /// drop self from waiting room
+        state.drop_from_waiting_room(room_id, self_sink);
 
         /// if not owner send join requets to the owner of room
         /// TODO!: check on options first, is the room need request to join or can join directly
@@ -332,7 +358,9 @@ async fn handle_socket(socket: WebSocket, _user_agent: String, state: ServerStat
                                     if let Err(e) = WsMsg::handle_join(
                                         room,
                                         conn_id,token, username, &state, tx.clone()).await {
-                                        warn!("handle_join: {e}");
+                                        warn!("handle_join {}: {e}", room);
+
+                                        state.waiting_room.entry(room).or_default().push(tx.clone());
                                     }
                                 }
                                 /// only forwarding the message from client

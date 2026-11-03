@@ -12,7 +12,7 @@ use axum::{
 use axum::extract::Request;
 use axum::response::{IntoResponse, Response};
 use axum_extra::TypedHeader;
-use dashmap::DashMap;
+use dashmap::{DashMap, Entry};
 use deadpool_postgres::Pool;
 use std::sync::Arc;
 use std::time::Duration;
@@ -28,6 +28,7 @@ use crate::sfu::room::RoomSfu;
 use crate::utils::{AccessClaims, verify_jwt};
 use headers::{Authorization, authorization::Bearer};
 use http::StatusCode;
+use uuid::Uuid;
 
 #[derive(Default)]
 struct ApiV1 {}
@@ -45,13 +46,14 @@ impl ApiV1 {
 #[derive(Clone)]
 pub struct ServerState {
     /// room id to rooms
-    pub rooms: Arc<DashMap<uuid::Uuid, Arc<RoomSfu>>>,
+    pub rooms: Arc<DashMap<Uuid, Arc<RoomSfu>>>,
     /// conn id to rooms
-    pub conn_to_rooms: Arc<DashMap<uuid::Uuid, Arc<RoomSfu>>>,
-    pub ws_conn: Arc<DashMap<uuid::Uuid, mpsc::Sender<Message>>>,
+    pub conn_to_rooms: Arc<DashMap<Uuid, Arc<RoomSfu>>>,
+    pub ws_conn: Arc<DashMap<Uuid, mpsc::Sender<Message>>>,
     pub pool: Pool,
     pub hash_sem: Arc<Semaphore>,
     pub allowed_origins: Arc<Vec<String>>,
+    pub waiting_room: Arc<DashMap<Uuid, Vec<mpsc::Sender<Message>>>>
 }
 
 impl ServerState {
@@ -63,6 +65,26 @@ impl ServerState {
             hash_sem: Arc::new(Semaphore::new(4)),
             conn_to_rooms: Arc::default(),
             allowed_origins: Arc::new(allowed_origins),
+            waiting_room: Arc::default(),
+        }
+    }
+
+    pub async fn broadcast_to_waiting_room(&self, room: Uuid, m: Message) {
+        let senders = self.waiting_room.get(&room)
+            .map(|m| m.clone())
+            .unwrap_or_default();
+        
+        for s in senders {
+            _ = s.send(m.clone()).await;
+        }
+    }
+    
+    pub fn drop_from_waiting_room(&self, room: Uuid, sender: mpsc::Sender<Message>) {
+        if let Entry::Occupied(mut e) = self.waiting_room.entry(room) {
+            e.get_mut().retain(|tx| !tx.same_channel(&sender));
+            if e.get().is_empty() {
+                e.remove();
+            }
         }
     }
 }

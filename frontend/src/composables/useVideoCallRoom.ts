@@ -22,6 +22,7 @@ export function useVideoCallRoom(getRoomParam: () => string | string[] | undefin
     newMessageData,
   } = storeToRefs(callStore)
 
+  const auth = useAuthStore()
   let participantSeq = 0
 
   const signaling = useSignaling()
@@ -183,7 +184,10 @@ export function useVideoCallRoom(getRoomParam: () => string | string[] | undefin
         case 'sync': {
           console.log(data)
           const members: { conn_id: string; username: string }[] = data.members
-          members.forEach((v) => {
+
+          for (const v of members) {
+            if (callStore.participants.some((m) => m.conn_id === v.conn_id)) continue
+
             callStore.upsertParticipant({
               id: ++participantSeq,
               conn_id: v.conn_id,
@@ -192,7 +196,7 @@ export function useVideoCallRoom(getRoomParam: () => string | string[] | undefin
               cameraOff: true,
               stream: null,
             })
-          })
+          }
           break
         }
 
@@ -241,6 +245,12 @@ export function useVideoCallRoom(getRoomParam: () => string | string[] | undefin
           break
         }
 
+        /// notification from server indicates room host already joined the room
+        case 'notify': {
+          signaling.join(callStore.room.id!, auth.accessToken)
+          break
+        }
+
         // guest disconnect
         // TODO: not handled on backend
         case 'request_cancel':
@@ -274,7 +284,6 @@ export function useVideoCallRoom(getRoomParam: () => string | string[] | undefin
   }
 
   onMounted(async () => {
-    const auth = useAuthStore()
 
     try {
       await webrtc.init()
