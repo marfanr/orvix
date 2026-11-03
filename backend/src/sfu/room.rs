@@ -299,6 +299,28 @@ impl RoomSfu {
         failed
     }
 
+    pub async fn broadcast_chat<T>(&self, conn_id: Uuid, msg: &T) -> Vec<Uuid>
+    where
+        T: sonic_rs::Serialize + ?Sized,
+    {
+        let mut failed = Vec::new();
+
+        for peer in self.peers.iter() {
+            if peer.key() == &conn_id {
+                continue;
+            }
+            if let Err(_) = peer.send_chat(msg).await {
+                warn!(
+                    "broadcast to {} failed, ws queue full or closed",
+                    peer.key()
+                );
+                failed.push(peer.key().to_owned());
+            }
+        }
+
+        failed
+    }
+
     pub fn send_to_owner(&self, from: Uuid, msg: Message) -> Vec<Uuid> {
         let mut failed = Vec::new();
 

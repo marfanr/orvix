@@ -186,10 +186,12 @@ impl WsMsg {
 
         let room_peer = RoomPeer::new(
             user_id,
+            conn_id,
             Arc::clone(&username),
             pub_peer,
             sub_peer,
             Some(self_sink.clone()),
+            Arc::clone(&room_arc)
         )
         .await
         .map_err(|e| WsError(Arc::from(format!("room peer: {}", e.to_string()))))?;
