@@ -117,8 +117,6 @@ impl PeerConnectionEventHandler for PcHandler {
                 return;
             }
         };
-        let port = init.candidate.split_whitespace().nth(5).unwrap_or("");
-        info!("ice detected port {} from {:#?}", port, self.peer_type);
 
         let peer_type = self.peer_type.to_string();
 
