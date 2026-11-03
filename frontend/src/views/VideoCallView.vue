@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import CallControls from '@/components/video-call/CallControls.vue'
 import CallHeader from '@/components/video-call/CallHeader.vue'
@@ -9,8 +9,19 @@ import JoinRequestToast from '@/components/video-call/JoinRequestToast.vue'
 import VideoGrid from '@/components/video-call/VideoGrid.vue'
 import { useVideoCallRoom } from '@/composables/useVideoCallRoom'
 import WelcomeToast from '@/components/video-call/membersChangesToast.vue'
+import MembersPopup from '@/components/video-call/MembersPopup.vue'
+import { provideMembersPanel } from '@/composables/useMembersPanel.ts'
+import { provideConfigPanel } from '@/composables/useConfigPanel.tsx'
+import ConfigPopup from '@/components/video-call/ConfigPopup.vue'
+import ChatWindow from '@/components/video-call/ChatWindow.vue'
+import { provideMeetingConfig } from '@/composables/useMeetingConfig.ts'
+import { provideMessages } from '@/composables/useMessages.ts'
+import type { ChatMessage } from '@/types/video-call.ts'
 
 const route = useRoute()
+const meetingConfig = provideMeetingConfig()
+const chatMessages = ref<ChatMessage[]>([])
+const { isOpen: chatOpen, close: closeChat } = provideMessages(chatMessages)
 
 const {
   participants,
@@ -28,7 +39,10 @@ const {
   memberChangesData,
   resolveNewMembers,
   sendControl,
-} = useVideoCallRoom(() => route.params.id)
+} = useVideoCallRoom(() => route.params.id, meetingConfig)
+
+const membersPanel = provideMembersPanel(participants)
+const configPanel = provideConfigPanel()
 
 const roomParamId = computed(() => String(route.params.id))
 
@@ -53,7 +67,10 @@ const roomStatus = computed<'denied' | 'waiting' | 'not-started' | 'not-found'>(
     class="flex flex-col w-full h-dvh bg-gray-100 overflow-hidden"
   >
     <CallHeader :roomTitle="room.title" class="shrink-0" />
-    <VideoGrid :participants="participants" class="flex-1 min-h-0" />
+    <div class="flex flex-1 min-h-0">
+      <VideoGrid :participants="participants" class="flex-1 min-w-0" />
+      <ChatWindow v-if="chatOpen" @close="closeChat" />
+    </div>
     <FloatingReactions :reactions="floating" />
 
     <JoinRequestToast
@@ -64,6 +81,8 @@ const roomStatus = computed<'denied' | 'waiting' | 'not-started' | 'not-found'>(
     />
 
     <WelcomeToast :user="memberChangesData" @resolve="resolveNewMembers" />
+    <members-popup v-if="membersPanel.isOpen" />
+    <ConfigPopup v-if="configPanel.isOpen" />
 
     <CallControls
       :camera-off="cameraOff"

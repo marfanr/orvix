@@ -1,4 +1,9 @@
 import { ref } from 'vue'
+import { SupportedBitrate, SupportedVideoCodec } from '@/types/video-call.ts'
+import {
+  useMeetingConfig,
+  type MeetingConfigContext,
+} from '@/composables/useMeetingConfig.ts'
 
 export type DataControlType = string | Blob | ArrayBuffer
 
@@ -6,14 +11,22 @@ export function useWebRTC(
   send: (obj: unknown) => unknown,
   onTrack?: (e: RTCTrackEvent) => void,
   handleControl?: (c: MessageEvent) => void,
+  meetingConfig?: MeetingConfigContext,
 ) {
   const debug = (...args: unknown[]) => {
     if (import.meta.env.DEV) console.log(...args)
   }
 
+  const form = meetingConfig?.form ?? useMeetingConfig().form
+
   const remoteVideoRef = ref<HTMLVideoElement | null>(null)
-  const peerCon = ref<RTCPeerConnection | null>(null)
+
+  const PublisherPeerCon = ref<RTCPeerConnection | null>(null)
+  const SubscriberPeerCon = ref<RTCPeerConnection | null>(null)
+
   const localTracksVideo = ref<RTCRtpSender | null>(null)
+  const localTracksTranceiver = ref<RTCRtpTransceiver | null>(null)
+
   const localTracksAudio = ref<RTCRtpSender | null>(null)
   const controlChannel = ref<RTCDataChannel | null>(null)
   const pendingMessageControlCh: DataControlType[] = []
@@ -27,7 +40,7 @@ export function useWebRTC(
       const candidate = pendingCandidates.shift()
       if (!candidate) continue
       try {
-        await peerCon.value?.addIceCandidate(candidate)
+        await PublisherPeerCon.value?.addIceCandidate(candidate)
       } catch (err) {
         console.warn('addIceCandidate failed', err)
       }
@@ -35,15 +48,23 @@ export function useWebRTC(
   }
 
   const init = async () => {
-    if (peerCon.value) return
+    if (PublisherPeerCon.value) return
 
-    const pc = new RTCPeerConnection({
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+    const iceServers: RTCIceServer[] = [{ urls: "stun:stun.l.google.com:19302" }]
+
+    const pub_pc = new RTCPeerConnection({
+      iceServers,
       rtcpMuxPolicy: 'require',
     })
-    peerCon.value = pc
+    const sub_pc = new RTCPeerConnection({
+      iceServers,
+      rtcpMuxPolicy: 'require',
+    })
 
-    controlChannel.value ??= pc.createDataChannel('control')
+    PublisherPeerCon.value = pub_pc
+    SubscriberPeerCon.value = sub_pc
+
+    controlChannel.value ??= pub_pc.createDataChannel('control')
     controlChannel.value.onopen = () => {
       debug('WebRTC connected')
       while (pendingMessageControlCh.length > 0 && controlChannel.value?.readyState === 'open') {
@@ -63,10 +84,23 @@ export function useWebRTC(
       return addr?.includes(':')
     }
 
-    pc.addEventListener('icecandidate', (e) => {
+    pub_pc.addEventListener('icecandidate', (e) => {
       if (!e.candidate) return
       if (isIPv6(e.candidate)) return
       send({
+        from: 'PUBLISHER',
+        type: 'candidate',
+        candidate: e.candidate.candidate,
+        mid: e.candidate.sdpMid,
+        line_index: e.candidate.sdpMLineIndex,
+        username_fragment: e.candidate.usernameFragment,
+      })
+    })
+    sub_pc.addEventListener('icecandidate', (e) => {
+      if (!e.candidate) return
+      if (isIPv6(e.candidate)) return
+      send({
+        from: 'SUBSCRIBER',
         type: 'candidate',
         candidate: e.candidate.candidate,
         mid: e.candidate.sdpMid,
@@ -75,22 +109,23 @@ export function useWebRTC(
       })
     })
 
-    pc.addEventListener('iceconnectionstatechange', () => {
-      console.log('ICE:', pc.iceConnectionState)
+    pub_pc.addEventListener('iceconnectionstatechange', () => {
+      console.log('ICE:', pub_pc.iceConnectionState)
+    })
+    sub_pc.addEventListener('iceconnectionstatechange', () => {
+      console.log('ICE:', sub_pc.iceConnectionState)
     })
 
     const caps = RTCRtpReceiver.getCapabilities('video')
     // TODO: send capability to server
     console.log('capability video ', caps)
 
-    pc.addEventListener('connectionstatechange', () => debug('pc:', pc.connectionState))
-    pc.addEventListener('track', (e) => {
-      console.log('new track', e)
+    sub_pc.addEventListener('track', (e) => {
       if (remoteVideoRef.value)
         remoteVideoRef.value.srcObject = e.streams[0] ?? new MediaStream([e.track])
       onTrack?.(e)
     })
-    pc.addEventListener('datachannel', (e) => {
+    pub_pc.addEventListener('datachannel', (e) => {
       const channel = e.channel
 
       channel.onmessage = (msg) => {
@@ -100,18 +135,47 @@ export function useWebRTC(
   }
 
   /// attach local media tracks, skipped when the track is already attached
-  const addLocalStream = (stream: MediaStream) => {
-    const pc = peerCon.value
+  const addLocalStream = async (stream: MediaStream) => {
+    const pc = PublisherPeerCon.value
     if (!pc) return
     for (const track of stream.getTracks()) {
       console.log('track', track)
 
       if (track.kind == 'video') {
-        if (!localTracksVideo.value) localTracksVideo.value = pc.addTrack(track, stream)
-        else localTracksVideo.value.replaceTrack(track)
+        if (!localTracksTranceiver.value) {
+          localTracksTranceiver.value = pc.addTransceiver(track, {
+            direction: 'sendonly',
+            streams: [stream],
+            sendEncodings: [
+              {
+                rid: 'q',
+                scaleResolutionDownBy: 3,
+                maxBitrate: 500_000,
+                maxFramerate: 30,
+              },
+              {
+                rid: 'h',
+                scaleResolutionDownBy: 1.5,
+                maxBitrate: 1_500_000,
+                maxFramerate: 30,
+              },
+              {
+                rid: 'f',
+                scaleResolutionDownBy: 1,
+                maxBitrate: 2_500_000,
+                maxFramerate: 30,
+              },
+            ],
+          })
+
+          const sender = localTracksTranceiver.value?.sender
+          console.log('encodings after answer', sender?.getParameters().encodings)
+        } else {
+          await localTracksTranceiver.value.sender.replaceTrack(track)
+        }
       } else if (track.kind == 'audio') {
         if (!localTracksAudio.value) localTracksAudio.value = pc.addTrack(track, stream)
-        else localTracksAudio.value.replaceTrack(track)
+        else await localTracksAudio.value.replaceTrack(track)
       }
 
       if (addedTracks.has(track)) continue
@@ -119,23 +183,45 @@ export function useWebRTC(
     }
   }
 
-  /// force the video transceivers to negotiate H264, the recorder on the
-  /// backend only understands H264. Chrome/Brave put VP8 first by default
-  // TODO: create option to select preferred codecs and reports the current codecs to backend
-  const preferH264 = (pc: RTCPeerConnection): void => {
+  const preferCodec = (pc: RTCPeerConnection, codec: SupportedVideoCodec, kind: string = 'video',): void => {
+    console.log(`sellected = ${kind}/${codec.toString()}`)
     if (typeof RTCRtpSender.getCapabilities !== 'function') return
 
-    const codecs = RTCRtpSender.getCapabilities('video')?.codecs ?? []
-    const h264 = codecs.filter((c) => c.mimeType.toLowerCase() === 'video/h264')
+    const codecs = RTCRtpSender.getCapabilities(kind)?.codecs ?? []
+    // console.log(codecs)
+    const h264 = codecs.filter(
+      (c) => c.mimeType.toLowerCase() === `${kind}/${codec.toString().toLowerCase()}`,
+    )
     if (h264.length === 0) {
-      console.warn('H264 is not available, recording will not work')
+      console.warn(`${kind}/${codec.toString()} is not available, recording will not work`)
       return
+    }
+
+    let maxBitrate = 2_000_000;
+    switch (form.maxBitrate) {
+      case SupportedBitrate.AUTO:
+        maxBitrate = 2_000_000;
+        break;
+      case SupportedBitrate.B1:
+        maxBitrate = 1_000_000;
+        break;
+      case SupportedBitrate.B2:
+        maxBitrate = 2_000_000;
+        break;
+      case SupportedBitrate.B4:
+        maxBitrate = 4_000_000;
+        break;
+      case SupportedBitrate.B8:
+        maxBitrate = 8_000_000;
+        break;
     }
     for (const s of pc.getSenders()) {
       const p = s.getParameters()
       if (p.encodings.length == 0) continue
-      p.encodings[0]!.maxBitrate = 2_000_000
-      p.encodings[0]!.networkPriority = 'high'
+        for (let i = 0; i < p.encodings.length; i++) {
+          p.encodings[i]!.maxBitrate = maxBitrate
+          p.encodings[i]!.networkPriority = 'high'
+        }
       s.setParameters(p).then()
     }
 
@@ -153,16 +239,16 @@ export function useWebRTC(
 
   /// create offer + apply it locally, returns the sdp to be sent to the peer
   const createOffer = async (): Promise<string | undefined> => {
-    const pc = peerCon.value
+    const pc = PublisherPeerCon.value
     if (!pc) return undefined
-    preferH264(pc)
+    preferCodec(pc, form.preferredCodec, 'video')
     const offer = await pc.createOffer()
     await pc.setLocalDescription(offer)
     return pc.localDescription?.sdp ?? offer.sdp
   }
 
   const setRemoteAnswer = async (sdp: string) => {
-    const pc = peerCon.value
+    const pc = PublisherPeerCon.value
     if (!pc) return
     await pc.setRemoteDescription({ type: 'answer', sdp })
     remoteDescriptionSet = true
@@ -170,12 +256,14 @@ export function useWebRTC(
   }
 
   const handleRemoteOffer = async (sdp: string): Promise<string | undefined> => {
-    const pc = peerCon.value
+    const pc = SubscriberPeerCon.value
     if (!pc) return undefined
     if (pc.signalingState !== 'stable') {
       console.warn('handleRemoteOffer while signalingState is', pc.signalingState)
       await pc.setLocalDescription({ type: 'rollback' })
+      // return undefined
     }
+
     await pc.setRemoteDescription({ type: 'offer', sdp })
     remoteDescriptionSet = true
     await flushPendingCandidates()
@@ -185,13 +273,15 @@ export function useWebRTC(
   }
 
   /// candidates may arrive before the remote description is applied, buffer them
-  const addIceCandidate = async (candidate: RTCIceCandidateInit) => {
+  const addIceCandidate = async (peer_type: string, candidate: RTCIceCandidateInit) => {
+    const pc = peer_type == 'PUBLISHER' ? SubscriberPeerCon.value : PublisherPeerCon.value
+
     if (!remoteDescriptionSet) {
       pendingCandidates.push(candidate)
       return
     }
     try {
-      await peerCon.value?.addIceCandidate(candidate)
+      await pc?.addIceCandidate(candidate)
     } catch (err) {
       console.warn('addIceCandidate failed', err)
     }
@@ -215,16 +305,26 @@ export function useWebRTC(
   }
 
   const close = () => {
-    peerCon.value?.close()
-    peerCon.value = null
+    controlChannel.value?.close()
+    PublisherPeerCon.value?.close()
+
+    PublisherPeerCon.value = null
+    controlChannel.value = null
+
+    localTracksVideo.value = null
+    localTracksAudio.value = null
+    localTracksTranceiver.value = null
+
     pendingCandidates.length = 0
+    pendingMessageControlCh.length = 0
+
     addedTracks.clear()
     remoteDescriptionSet = false
   }
 
   return {
     remoteVideoRef,
-    peerCon,
+    peerCon: PublisherPeerCon,
     init,
     addLocalStream,
     createOffer,

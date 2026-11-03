@@ -1,9 +1,10 @@
 @import 'tailwindcss';
 
 @theme {
-  --color-primary: #1d4cff;
-  --color-primary-hover: #1640d9;
-  --color-primary-soft: #e8edff;
+  --color-primary: #AB886D;
+  --color-primary-hover: #493628;
+  --color-primary-soft: #E4E0E1;
+
   --color-success: #16a34a;
   --color-warning: #d97706;
   --color-danger: #dc2626;
@@ -11,17 +12,17 @@
   --font-heading: 'Lexend', ui-sans-serif, system-ui, sans-serif;
   --font-body: 'Source Sans 3', ui-sans-serif, system-ui, sans-serif;
 
-  --color-blue-ribbon-50: #ebf5ff;
-  --color-blue-ribbon-100: #dbedff;
-  --color-blue-ribbon-200: #bedcff;
-  --color-blue-ribbon-300: #97c4ff;
-  --color-blue-ribbon-400: #6ea2ff;
-  --color-blue-ribbon-500: #4c7fff;
-  --color-blue-ribbon-600: #1d4cff;
-  --color-blue-ribbon-700: #2045e2;
-  --color-blue-ribbon-800: #1d3cb6;
-  --color-blue-ribbon-900: #20398f;
-  --color-blue-ribbon-950: #132053;
+  --color-brown-ribbon-50: #E4E0E1;
+  --color-brown-ribbon-100: #E0D8D5;
+  --color-brown-ribbon-200: #D6C0B3;
+  --color-brown-ribbon-300: #C9AD9B;
+  --color-brown-ribbon-400: #BC9A83;
+  --color-brown-ribbon-500: #AB886D;
+  --color-brown-ribbon-600: #8F7059;
+  --color-brown-ribbon-700: #755B48;
+  --color-brown-ribbon-800: #614A3A;
+  --color-brown-ribbon-900: #493628;
+  --color-brown-ribbon-950: #302319;
 }
 
 @layer base {

@@ -33,13 +33,13 @@ const emit = defineEmits<{
       >
         <div class="flex items-start gap-3">
           <div
-            class="flex size-10 shrink-0 items-center justify-center rounded-full bg-indigo-50 text-sm font-semibold text-indigo-600 ring-1 ring-indigo-100"
+            class="flex size-10 shrink-0 items-center justify-center rounded-full bg-indigo-50 text-sm font-semibold text-brown-ribbon-600 ring-1 ring-indigo-100"
           >
             {{ request.username[0]?.toUpperCase() }}
           </div>
 
           <div class="min-w-0 flex-1">
-            <p class="truncate text-sm font-medium text-gray-900">
+            <p class="truncate text-sm font-medium text-shadow-brown-ribbon-800">
               {{ request.username }}
             </p>
             <p class="mt-0.5 text-sm text-gray-500">wants to join this meeting</p>
@@ -47,7 +47,7 @@ const emit = defineEmits<{
             <div class="mt-3 flex items-center gap-2">
               <button
                 type="button"
-                class="rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white shadow-xs transition hover:bg-indigo-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2"
+                class="rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-white shadow-xs transition hover:bg-primary-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2"
                 @click="emit('admit')"
               >
                 Admit

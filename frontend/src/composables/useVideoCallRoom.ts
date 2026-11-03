@@ -7,6 +7,7 @@ import { useLocalMedia } from './useLocalMedia'
 import { useReactions } from './useReactions'
 import { useSignaling } from './useSignaling'
 import { useWebRTC } from './useWebRTC'
+import type { MeetingConfigContext } from './useMeetingConfig'
 
 interface RoomState {
   id: string | undefined
@@ -15,7 +16,10 @@ interface RoomState {
   title: string
 }
 
-export function useVideoCallRoom(getRoomParam: () => string | string[] | undefined) {
+export function useVideoCallRoom(
+  getRoomParam: () => string | string[] | undefined,
+  meetingConfig?: MeetingConfigContext,
+) {
   let participantSeq = 0
   const participants = ref<Participant[]>([
     {
@@ -42,12 +46,19 @@ export function useVideoCallRoom(getRoomParam: () => string | string[] | undefin
     answerRequest: signaling.answerRequest,
   })
   const onRemoteTrack = (e: RTCTrackEvent) => {
+    console.log('new track', e)
+
     const stream = e.streams[0] ?? new MediaStream([e.track])
     const streamId = stream.id
     console.log('onRemoteTrack event:', e.track.kind, e.streams, streamId)
     const target =
       participants.value.find((p) => p.conn_id && streamId.includes(p.conn_id)) ??
       participants.value.find((p) => p.id !== 0)
+
+    if (!target) {
+      console.warn('Track diterima untuk user yang tidak dikenal, abaikan.', streamId)
+      return // DILARANG KERAS menggunakan fallback ke (p.id !== 0) !
+    }
 
     if (target) {
       if (target.stream) {
@@ -69,7 +80,7 @@ export function useVideoCallRoom(getRoomParam: () => string | string[] | undefin
         if (e.track.kind === 'audio' && target) {
           target.muted = true
         }
-        console.log("ended track")
+        console.log('ended track')
       }
     }
   }
@@ -95,7 +106,7 @@ export function useVideoCallRoom(getRoomParam: () => string | string[] | undefin
     }
   }
 
-  const webrtc = useWebRTC(signaling.send, onRemoteTrack, handleControlChannel)
+  const webrtc = useWebRTC(signaling.send, onRemoteTrack, handleControlChannel, meetingConfig)
   const media = useLocalMedia(participants)
 
   // welcome members
@@ -134,7 +145,7 @@ export function useVideoCallRoom(getRoomParam: () => string | string[] | undefin
     const stream = media.getMe()?.stream
     if (!stream) return
 
-    webrtc.addLocalStream(stream)
+    await webrtc.addLocalStream(stream)
     await renegotiate()
   }
 
@@ -201,7 +212,7 @@ export function useVideoCallRoom(getRoomParam: () => string | string[] | undefin
           }
           break
         }
-
+        // handle offer from server publisher
         case 'answer': {
           console.log('answer', data)
           await webrtc.setRemoteAnswer(data.sdp)
@@ -209,7 +220,7 @@ export function useVideoCallRoom(getRoomParam: () => string | string[] | undefin
         }
 
         case 'ice': {
-          webrtc.addIceCandidate({
+          webrtc.addIceCandidate(data.peer_type, {
             candidate: data.candidate,
             sdpMid: data.sdpMid,
             sdpMLineIndex: data.sdpMLineIndex,

@@ -67,7 +67,7 @@ watch(
     <!-- Avatar -->
     <div
       v-if="participant.cameraOff"
-      class="size-16 sm:size-20 md:size-24 shrink-0 rounded-full bg-blue-ribbon-800 flex items-center justify-center"
+      class="size-16 sm:size-20 md:size-24 shrink-0 rounded-full bg-brown-ribbon-800 flex items-center justify-center"
     >
       <span class="text-white text-lg sm:text-xl md:text-2xl font-medium" aria-hidden="true">
         {{ participant.name[0]?.toUpperCase() }}

@@ -29,6 +29,7 @@ export function useLocalMedia(participants: Ref<Participant[]>) {
 
     // turn off
     if (!me.cameraOff) {
+
       localStream?.getVideoTracks().forEach((t) => {
         t.stop()
         localStream?.removeTrack(t)

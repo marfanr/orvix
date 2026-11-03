@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
-import { Grid3X3Icon, LockIcon } from 'lucide-vue-next'
+import { Grid3X3Icon, LockIcon, SettingsIcon } from 'lucide-vue-next'
+import { useConfigPanel } from '@/composables/useConfigPanel.tsx'
 
 const props = defineProps<{
   roomTitle: string
@@ -16,6 +17,8 @@ const displayTitle = ref(props.roomTitle)
 const inputRef = ref<HTMLInputElement | null>(null)
 
 const inputWidth = computed(() => `${Math.max(draft.value.length + 1, 12)}ch`)
+
+const configPanel = useConfigPanel()
 
 watch(
   () => props.roomTitle,
@@ -89,6 +92,16 @@ const cancel = () => {
         >
           {{ displayTitle }}
         </h1>
+      </li>
+      <li class="shrink-0">
+        <button
+          type="button"
+          @click="configPanel.toggle()"
+          class="flex flex-row gap-x-1 items-center cursor-pointer rounded-md px-2 py-1 text-xs sm:text-sm text-gray-700 transition hover:bg-gray-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+        >
+          <SettingsIcon :size="16" class="sm:hidden" aria-hidden="true" />
+          <SettingsIcon :size="18" class="hidden sm:block" aria-hidden="true" />
+        </button>
       </li>
       <li class="shrink-0">
         <button

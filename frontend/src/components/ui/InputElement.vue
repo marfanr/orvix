@@ -8,6 +8,10 @@ interface Props {
   autocomplete?: string
   error?: string
   id?: string
+  hideLabel?: boolean
+  hint?: string
+  monospace?: boolean
+  min?: string
 }
 const showPassword = ref(false)
 const props = withDefaults(defineProps<Props>(), {
@@ -16,6 +20,10 @@ const props = withDefaults(defineProps<Props>(), {
   autocomplete: undefined,
   error: '',
   id: undefined,
+  hideLabel: true,
+  hint: '',
+  monospace: false,
+  min: undefined,
 })
 
 const model = defineModel<string>({ default: '' })
@@ -23,11 +31,25 @@ const model = defineModel<string>({ default: '' })
 const uid = useId()
 const inputId = computed(() => props.id ?? `field-${uid}`)
 const errorId = computed(() => `${inputId.value}-error`)
+const hintId = computed(() => `${inputId.value}-hint`)
+const describedBy = computed(() => {
+  const ids: string[] = []
+  if (props.error) ids.push(errorId.value)
+  if (props.hint) ids.push(hintId.value)
+  return ids.length > 0 ? ids.join(' ') : undefined
+})
 </script>
 
 <template>
   <div>
-    <label :for="inputId" class="sr-only">{{ label }}</label>
+    <label
+      v-if="!hideLabel"
+      :for="inputId"
+      class="mb-1.5 block text-xs font-semibold tracking-wide text-gray-500 uppercase"
+    >
+      {{ label }}
+    </label>
+    <label v-else :for="inputId" class="sr-only">{{ label }}</label>
     <input
       :id="inputId"
       v-model="model"
@@ -35,20 +57,23 @@ const errorId = computed(() => `${inputId.value}-error`)
       v-if="type != 'password'"
       :autocomplete="autocomplete"
       :placeholder="placeholder || label"
+      :min="min"
       :aria-invalid="!!error"
-      :aria-describedby="error ? errorId : undefined"
+      :aria-describedby="describedBy"
       class="h-11 w-full rounded-lg border border-slate-200 bg-white px-4 text-sm placeholder:text-slate-500 transition focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+      :class="monospace ? 'font-mono' : ''"
     />
     <div class="relative" v-else>
       <input
-        id="password"
+        :id="inputId"
         v-model="model"
         :type="showPassword ? 'text' : 'password'"
-        autocomplete="current-password"
-        placeholder="Password"
+        :autocomplete="autocomplete"
+        :placeholder="placeholder || label"
         :aria-invalid="!!error"
-        :aria-describedby="error ? 'password-error' : undefined"
+        :aria-describedby="describedBy"
         class="h-11 w-full rounded-lg border border-slate-200 bg-white pl-4 pr-11 text-sm placeholder:text-slate-500 transition focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+        :class="monospace ? 'font-mono' : ''"
       />
 
       <button
@@ -88,6 +113,9 @@ const errorId = computed(() => `${inputId.value}-error`)
         </svg>
       </button>
     </div>
+    <p v-if="hint" :id="hintId" class="mt-1 text-xs text-gray-500">
+      {{ hint }}
+    </p>
     <p v-if="error" :id="errorId" class="mt-1 text-xs text-red-600">
       {{ error }}
     </p>

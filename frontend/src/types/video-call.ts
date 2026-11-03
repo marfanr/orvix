@@ -22,8 +22,36 @@ export type RoomStatus = 'loading' | 'joined' | 'denied' | 'waiting' | 'not-star
 
 export type MemberChangesType = 'join' | 'leave'
 
+export enum PopUpWidth {
+  MEDIUM,
+  LARGE,
+}
+
 export interface MemberChanges {
   eventId: number
   username: string
   type: MemberChangesType
+}
+
+export interface ChatMessage {
+  id: number
+  sender: string
+  text: string
+  time: string
+  outgoing: boolean
+}
+
+export enum SupportedVideoCodec {
+  H264 = 'H264',
+  VP8 = 'VP8',
+  VP9 = 'VP9',
+  AV1 = 'AVI'
+}
+
+export enum SupportedBitrate {
+  AUTO = 'auto',
+  B1 = '1',
+  B2 = '2',
+  B4 = '4',
+  B8 = '8',
 }

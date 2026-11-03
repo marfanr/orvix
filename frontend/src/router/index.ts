@@ -3,6 +3,7 @@ import VideoCallView from '../views/VideoCallView.vue'
 import HomeView from '@/views/HomeView.vue'
 import SigninView from '@/views/SigninView.vue'
 import SignupView from '@/views/SignupView.vue'
+import NotFoundView from '@/views/NotFoundView.vue'
 import { useAuthStore } from '@/stores/auth'
 
 const router = createRouter({
@@ -37,6 +38,14 @@ const router = createRouter({
       meta: {
         title: 'Video Call',
         requiresAuth: false,
+      },
+    },
+    {
+      path: '/:pathMatch(.*)*',
+      name: 'not-found',
+      component: NotFoundView,
+      meta: {
+        title: 'Page not found',
       },
     },
   ],

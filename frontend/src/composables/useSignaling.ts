@@ -39,6 +39,7 @@ export function useSignaling() {
     ws.send({ type: 'leave', room })
   }
 
+  // client pub <-> server sub
   const sendOffer = (offer: string) => {
     ws.send({ type: 'offer', sdp: offer })
   }
