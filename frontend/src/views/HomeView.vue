@@ -23,6 +23,7 @@ import { useAuthStore } from '@/stores/auth'
 import InputElement from '@/components/ui/InputElement.vue'
 import SelectElement from '@/components/ui/SelectElement.vue'
 import ToggleElement from '@/components/ui/ToggleElement.vue'
+import HeaderBrand from '@/components/HeaderBrand.vue'
 
 /* ---------- navigation ---------- */
 const navigationItems = ref([
@@ -244,17 +245,7 @@ const menuItemCls =
     <header class="sticky top-0 z-40 border-b border-stone-200/80 bg-white/80 backdrop-blur-md">
       <div class="mx-auto flex h-16 max-w-6xl items-center gap-2 px-4 sm:gap-3 sm:px-6 lg:px-8">
         <div class="flex items-center gap-x-2.5">
-          <span
-            class="grid size-9 place-items-center rounded-xl bg-primary text-white shadow-sm"
-            aria-hidden="true"
-          >
-            <WebcamIcon class="size-5" />
-          </span>
-          <span
-            class="hidden font-heading text-lg font-semibold tracking-tight text-gray-900 sm:block"
-          >
-            Orvix
-          </span>
+          <HeaderBrand/>
         </div>
 
         <nav

@@ -69,7 +69,7 @@ const onSubmit = handleSubmit(async (values) => {
       >
         <div class="flex items-center gap-2 text-xl font-semibold">
           <WebcamIcon aria-hidden="true" />
-          Vidcall.
+          Orvix
         </div>
 
         <!-- decorative -->
@@ -152,7 +152,6 @@ const onSubmit = handleSubmit(async (values) => {
         </div>
 
         <div class="mt-10 flex justify-between text-xs text-slate-500">
-          <a href="#" class="hover:text-slate-700">Privacy Policy</a>
           <span>Copyright 2026</span>
         </div>
       </section>

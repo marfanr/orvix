@@ -1,12 +1,11 @@
 <script setup lang="ts">
-import { WebcamIcon } from 'lucide-vue-next'
+import HeaderBrand from '@/components/HeaderBrand.vue'
 </script>
 
 <template>
   <div class="relative flex min-h-dvh w-full flex-col bg-gray-50">
     <header class="flex items-center gap-2 px-6 py-5 sm:px-10" aria-hidden="true">
-      <WebcamIcon aria-hidden="true" />
-      <span class="font-heading text-sm font-semibold text-gray-900">VidCall</span>
+      <HeaderBrand />
     </header>
 
     <main class="flex flex-1 flex-col items-center justify-center px-6 pb-16 text-center">

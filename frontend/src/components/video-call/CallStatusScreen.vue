@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { CheckIcon, CopyIcon } from 'lucide-vue-next'
+import HeaderBrand from '@/components/HeaderBrand.vue'
 
 const props = defineProps<{
   status: 'denied' | 'waiting' | 'not-started' | 'not-found'
@@ -66,7 +67,7 @@ async function copyLink() {
     :aria-live="meta.tone === 'alert' ? 'assertive' : 'polite'"
   >
     <header class="flex items-center gap-2 px-6 py-5 sm:px-10" aria-hidden="true">
-      <span class="font-heading text-sm font-semibold text-gray-900">VidCall</span>
+      <HeaderBrand/>
     </header>
 
     <main class="flex flex-1 flex-col items-center justify-center px-6 pb-16 text-center">
