@@ -1,4 +1,4 @@
-use crate::ffmpeg::{wait_ffmpeg_ready, FfmpegBuilder};
+// use crate::ffmpeg::{wait_ffmpeg_ready, FfmpegBuilder};
 use crate::sfu::room::RoomSfu;
 use crate::sfu::track::{PublishedTrack, RecordingHandle};
 use rtc::rtp::Packet;
@@ -299,47 +299,47 @@ async fn spawn_ffmpeg_with_retry(
             r":time_base=1/90000",
         );
 
-        let mut child = FfmpegBuilder::new()
-            .input_sdp(&sdp_path)
-            .video_copy("0:v:0")
-            .setts(SETTS_FILTER)
-            .disable_audio()
-            .output(&output)
-            .stdin_piped()
-            .stdout_null()
-            .stderr_inherit()
-            .build()
-            .spawn()
-            .map_err(|e| format!("spawn ffmpeg for {publisher}: {e}"))?;
-
-
-        match wait_ffmpeg_ready(port, &mut child, timeout).await {
-            Ok(()) => {
-                let Some(stdin) = child.stdin.take() else {
-                    let _ = child.kill().await;
-                    let _ = child.wait().await;
-                    return Err("ffmpeg stdin unavailable after startup".to_string());
-                };
-
-                info!(
-                    "recorder {publisher}: FFmpeg ready on UDP {port} (attempt {attempt}/{attempts})"
-                );
-                return Ok((port, child, stdin));
-            }
-            Err(e) => {
-                last_error = e;
-                warn!(
-                    "recorder {publisher}: startup attempt {attempt}/{attempts} on UDP {port} failed: {last_error}"
-                );
-                let _ = child.kill().await;
-                let _ = child.wait().await;
-                let _ = tokio::fs::remove_file(output).await;
-
-                if attempt < attempts {
-                    tokio::time::sleep(backoff_for(attempt, base_backoff)).await;
-                }
-            }
-        }
+        // let mut child = FfmpegBuilder::new()
+        //     .input_sdp(&sdp_path)
+        //     .video_copy("0:v:0")
+        //     .setts(SETTS_FILTER)
+        //     .disable_audio()
+        //     .output(&output)
+        //     .stdin_piped()
+        //     .stdout_null()
+        //     .stderr_inherit()
+        //     .build()
+        //     .spawn()
+        //     .map_err(|e| format!("spawn ffmpeg for {publisher}: {e}"))?;
+        //
+        //
+        // match wait_ffmpeg_ready(port, &mut child, timeout).await {
+        //     Ok(()) => {
+        //         let Some(stdin) = child.stdin.take() else {
+        //             let _ = child.kill().await;
+        //             let _ = child.wait().await;
+        //             return Err("ffmpeg stdin unavailable after startup".to_string());
+        //         };
+        //
+        //         info!(
+        //             "recorder {publisher}: FFmpeg ready on UDP {port} (attempt {attempt}/{attempts})"
+        //         );
+        //         return Ok((port, child, stdin));
+        //     }
+        //     Err(e) => {
+        //         last_error = e;
+        //         warn!(
+        //             "recorder {publisher}: startup attempt {attempt}/{attempts} on UDP {port} failed: {last_error}"
+        //         );
+        //         let _ = child.kill().await;
+        //         let _ = child.wait().await;
+        //         let _ = tokio::fs::remove_file(output).await;
+        //
+        //         if attempt < attempts {
+        //             tokio::time::sleep(backoff_for(attempt, base_backoff)).await;
+        //         }
+        //     }
+        // }
     }
 
     Err(format!(
