@@ -21,6 +21,7 @@ pub mod models;
 pub mod sfu;
 pub mod telemetry;
 pub mod utils;
+mod ffmpeg;
 
 #[derive(Default)]
 struct ArgsParsed {
@@ -38,7 +39,7 @@ fn handle_args() -> ArgsParsed {
     parsed
 }
 
-#[tokio::main]
+#[tokio::main(worker_threads = 8)]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     init_rustls();
     dotenvy::dotenv().ok();
