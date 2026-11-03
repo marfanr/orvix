@@ -16,7 +16,8 @@ import {
 import ReactionPicker from './ReactionPicker.vue'
 import type { DataControlType } from '@/composables/useWebRTC.ts'
 import { useMembersPanel } from '@/composables/useMembersPanel.ts'
-import { useMessages } from '@/composables/useMessages.ts'
+import { useCallStore } from '@/stores/call.ts'
+import { storeToRefs } from 'pinia'
 
 defineProps<{
   cameraOff: boolean
@@ -32,10 +33,12 @@ const emit = defineEmits<{
 }>()
 
 const membersPanel = useMembersPanel()
-const { isOpen: chatOpen, toggle: toggleChat } = useMessages()
+const store = useCallStore()
+const { isChatOpen } = storeToRefs(store)
+const { toggleChat } = store
 
 const actionClass =
-  'grid size-11 shrink-0 place-items-center rounded-full transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary touch-manipulation active:scale-95'
+  'grid size-11 shrink-0 place-items-center rounded-full transition cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary touch-manipulation active:scale-95'
 
 const moreOpen = ref(false)
 const moreButtonRef = ref<HTMLButtonElement | null>(null)
@@ -128,6 +131,7 @@ const menuItems = computed<MenuItem[]>(() => [
     description: 'Start a server recording',
     icon: CircleDotIcon,
     onSelect: onRecordClick,
+    disabled: true
   },
   {
     key: 'participants',
@@ -238,12 +242,12 @@ onUnmounted(() => {
 
       <button
         type="button"
-        :aria-label="chatOpen ? 'Close chat' : 'Open chat'"
-        :title="chatOpen ? 'Close chat' : 'Open chat'"
-        :aria-pressed="chatOpen"
+        :aria-label="isChatOpen ? 'Close chat' : 'Open chat'"
+        :title="isChatOpen ? 'Close chat' : 'Open chat'"
+        :aria-pressed="isChatOpen"
         :class="[
           actionClass,
-          chatOpen
+          isChatOpen
             ? 'bg-primary/10 text-primary hover:bg-primary/15'
             : 'bg-gray-100 text-gray-700 hover:bg-gray-200',
         ]"

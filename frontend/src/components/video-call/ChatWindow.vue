@@ -4,15 +4,16 @@ import { SmilePlusIcon, XIcon } from 'lucide-vue-next'
 import type { EmojiExt } from 'vue3-emoji-picker'
 import EmojiPicker from 'vue3-emoji-picker'
 import 'vue3-emoji-picker/css'
-import { formatMessageTime, useMessages } from '@/composables/useMessages.ts'
-import type { DataControlType } from '@/composables/useWebRTC.ts'
+import { useCallStore } from '@/stores/call.ts'
+import { storeToRefs } from 'pinia'
 
-const emit = defineEmits<{
-  'send-message': [msg: DataControlType, target?: string]
-  close: []
+const store = useCallStore()
+const { chatMessages } = storeToRefs(store)
+const { closeChat } = store
+
+const emits = defineEmits<{
+  send: [msg: string, target: string]
 }>()
-
-const { messages } = useMessages()
 
 const draft = ref('')
 const messagesEl = ref<HTMLElement | null>(null)
@@ -29,17 +30,10 @@ function sendMessage() {
   const text = draft.value.trim()
   if (!text) return
 
-  messages.value.push({
-    id: Date.now(),
-    sender: 'you',
-    text,
-    time: formatMessageTime(new Date()),
-    outgoing: true,
-  })
   draft.value = ''
   isRecipientOpen.value = false
 
-  emit('send-message', text)
+  emits('send', text, 'all')
 
   if (textareaEl.value) {
     textareaEl.value.style.height = 'auto'
@@ -74,7 +68,7 @@ function onScroll() {
 }
 
 watch(
-  () => messages.value.length,
+  () => chatMessages.value.length,
   async () => {
     await nextTick()
     if (isAtBottom.value) scrollToBottom('smooth')
@@ -149,14 +143,14 @@ onUnmounted(() => {
       <h2 class="text-sm font-semibold text-gray-900 flex items-center gap-x-2">
         Chat
         <span
-          v-if="messages.length"
+          v-if="chatMessages.length"
           class="px-1.5 py-0.5 rounded-full bg-gray-100 text-[10px] font-medium text-gray-500 tabular-nums"
         >
-          {{ messages.length }}
+          {{ chatMessages.length }}
         </span>
       </h2>
       <button
-        @click="emit('close')"
+        @click="closeChat"
         class="p-2 -mr-2 rounded-full text-gray-500 hover:bg-gray-100 hover:text-gray-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary transition"
         aria-label="Tutup chat"
       >
@@ -175,7 +169,7 @@ onUnmounted(() => {
     >
       <!-- Empty state -->
       <div
-        v-if="messages.length === 0"
+        v-if="chatMessages.length === 0"
         class="flex-1 flex flex-col items-center justify-center gap-y-1 text-center px-4"
       >
         <div
@@ -211,7 +205,7 @@ onUnmounted(() => {
         </div>
 
         <div
-          v-for="msg in messages"
+          v-for="msg in chatMessages"
           :key="msg.id"
           class="group flex flex-col"
           :class="msg.outgoing ? 'items-end' : 'items-start'"
@@ -249,7 +243,7 @@ onUnmounted(() => {
       leave-to-class="opacity-0 translate-y-1"
     >
       <button
-        v-if="!isAtBottom && messages.length"
+        v-if="!isAtBottom && chatMessages.length"
         @click="scrollToBottom('smooth')"
         class="self-center -mt-11 mb-1 z-10 flex items-center gap-x-1.5 px-3 py-1.5 rounded-full bg-white border border-gray-200 shadow-sm text-xs font-medium text-gray-700 hover:bg-gray-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary transition"
       >
