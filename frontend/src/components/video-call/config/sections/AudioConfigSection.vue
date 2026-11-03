@@ -2,10 +2,11 @@
 import { computed, useId } from 'vue'
 import SelectElement from '@/components/ui/SelectElement.vue'
 import ToggleElement from '@/components/ui/ToggleElement.vue'
-import { useMeetingConfig, type MeetingConfigToggleItem } from '@/composables/useMeetingConfig'
+import { useMeetingConfigStore, type MeetingConfigToggleItem } from '@/stores/meetingConfig'
 import { useMicrophoneTest } from '@/composables/useMicrophoneTest'
 
-const { form } = useMeetingConfig()
+const store = useMeetingConfigStore()
+const form = store.form
 const uid = useId()
 
 const { audioInputs, micStream, micError, micLoading, micLevel, startMicTest, stopMicTest } =

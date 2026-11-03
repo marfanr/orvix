@@ -4,9 +4,10 @@ import { VideoIcon } from 'lucide-vue-next'
 import SelectElement from '@/components/ui/SelectElement.vue'
 import ToggleElement from '@/components/ui/ToggleElement.vue'
 import { useCameraPreview } from '@/composables/useCameraPreview'
-import { useMeetingConfig, type MeetingConfigToggleItem } from '@/composables/useMeetingConfig'
+import { useMeetingConfigStore, type MeetingConfigToggleItem } from '@/stores/meetingConfig'
 
-const { form } = useMeetingConfig()
+const store = useMeetingConfigStore()
+const form = store.form
 const uid = useId()
 
 const {

@@ -3,9 +3,11 @@ import { useId } from 'vue'
 import CheckboxElement from '@/components/ui/CheckboxElement.vue'
 import InputElement from '@/components/ui/InputElement.vue'
 import ToggleElement from '@/components/ui/ToggleElement.vue'
-import { useMeetingConfig, type MeetingConfigToggleItem } from '@/composables/useMeetingConfig'
+import { useMeetingConfigStore, type MeetingConfigToggleItem } from '@/stores/meetingConfig'
 
-const { form, resetDefaults } = useMeetingConfig()
+const store = useMeetingConfigStore()
+const form = store.form
+const resetDefaults = store.resetDefaults
 const uid = useId()
 
 const advancedToggles: MeetingConfigToggleItem[] = [

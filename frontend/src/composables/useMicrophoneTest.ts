@@ -1,6 +1,6 @@
 import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { mediaErrorMessage } from '@/lib/media'
-import type { MeetingConfigForm } from '@/composables/useMeetingConfig'
+import type { MeetingConfigForm } from '@/stores/meetingConfig'
 
 export function useMicrophoneTest(form: MeetingConfigForm) {
   const audioInputs = ref<MediaDeviceInfo[]>([])

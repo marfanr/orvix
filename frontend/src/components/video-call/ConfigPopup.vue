@@ -12,10 +12,10 @@ import AdvancedConfigSection from '@/components/video-call/config/sections/Advan
 
 import { useConfigPanel } from '@/composables/useConfigPanel.tsx'
 import { PopUpWidth } from '@/types/video-call.ts'
-import  { type MeetingConfigSectionKey, useMeetingConfig } from '@/composables/useMeetingConfig.ts'
+import  { type MeetingConfigSectionKey, useMeetingConfigStore } from '@/stores/meetingConfig.ts'
 
 const { isOpen, close } = useConfigPanel()
-const {save} = useMeetingConfig()
+const { save } = useMeetingConfigStore()
 
 const popupRef = ref<{ contentEl: HTMLElement | null } | null>(null)
 let trap: FocusTrap | null = null

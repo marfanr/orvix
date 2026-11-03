@@ -2,10 +2,11 @@
 import { computed, useId } from 'vue'
 import SelectElement from '@/components/ui/SelectElement.vue'
 import ToggleElement from '@/components/ui/ToggleElement.vue'
-import { useMeetingConfig, type MeetingConfigToggleItem } from '@/composables/useMeetingConfig'
+import { useMeetingConfigStore, type MeetingConfigToggleItem } from '@/stores/meetingConfig'
 import { SupportedBitrate, SupportedVideoCodec } from '@/types/video-call.ts'
 
-const { form } = useMeetingConfig()
+const store = useMeetingConfigStore()
+const form = store.form
 const uid = useId()
 
 const bitrateOptions = [
@@ -27,11 +28,6 @@ const priorityOptions = [
   { value: 'low', label: 'Low' },
   { value: 'medium', label: 'Medium' },
   { value: 'high', label: 'High' },
-]
-
-const iceOptions = [
-  { value: 'all', label: 'All candidates' },
-  { value: 'relay', label: 'Relay only (TURN)' },
 ]
 
 const networkToggles: MeetingConfigToggleItem[] = [
@@ -91,12 +87,7 @@ const estimatedUpload = computed(() => {
           :options="priorityOptions"
         />
 
-        <SelectElement
-          :id="`${uid}-ice`"
-          v-model="form.iceTransport"
-          label="ICE transport"
-          :options="iceOptions"
-        />
+
       </div>
     </div>
 

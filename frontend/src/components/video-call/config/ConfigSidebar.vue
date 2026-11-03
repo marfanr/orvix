@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { nextTick, ref, type Component, type ComponentPublicInstance } from 'vue'
-import type { MeetingConfigSectionKey } from '@/composables/useMeetingConfig'
+import type { MeetingConfigSectionKey } from '@/stores/meetingConfig'
 
 interface SectionItem {
   key: MeetingConfigSectionKey

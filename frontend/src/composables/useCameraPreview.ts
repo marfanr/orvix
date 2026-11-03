@@ -1,6 +1,6 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { mediaErrorMessage } from '@/lib/media'
-import type { MeetingConfigForm } from '@/composables/useMeetingConfig'
+import type { MeetingConfigForm } from '@/stores/meetingConfig'
 
 function resolutionHeight(resolution: string): number | undefined {
   switch (resolution) {
