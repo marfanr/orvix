@@ -233,7 +233,7 @@ export function useWebRTC(
       const p = s.getParameters()
       if (p.encodings.length == 0) continue
       for (let i = 0; i < p.encodings.length; i++) {
-        p.encodings[i]!.maxBitrate = maxBitrate
+        // p.encodings[i]!.maxBitrate = maxBitrate
         p.encodings[i]!.networkPriority = form.networkPriority
       }
       s.setParameters(p).then()

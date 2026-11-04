@@ -18,6 +18,8 @@
   "dependencies": {
     "@braid/vue-formulate": "^2.5.3",
     "@lucide/vue": "^1.59.0",
+    "@mediapipe/tasks-vision": "^1.2.0",
+    "@techstark/opencv-js": "^5.0.0-release.1",
     "@vee-validate/zod": "^4.15.1",
     "@vueuse/core": "^15.0.0",
     "@vueuse/integrations": "^15.0.0",
