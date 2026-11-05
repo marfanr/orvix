@@ -1,5 +1,5 @@
-use crate::models::ModelError;
-use crate::models::constant::{CREATE_ROOM_SQL, GET_ROOM_BY_ALIAS_SQL, GET_ROOM_BY_ID_SQL};
+use crate::models::{ModelError, exec};
+use crate::models::constant::{CREATE_ROOM_SQL, DEL_ROOM_BY_ID_SQL, GET_ROOM_BY_ALIAS_SQL, GET_ROOM_BY_ID_SQL};
 use crate::models::{FromRow, StandardModel, fetch_one};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -66,6 +66,10 @@ impl Room {
 
     pub async fn get(db: &Object, id: Uuid) -> Result<Self, ModelError> {
         fetch_one(db, GET_ROOM_BY_ID_SQL, &[&id], "room not found").await
+    }
+
+    pub async fn drop(db: &Object, id: Uuid) -> Result<(), ModelError>{
+        exec(db, DEL_ROOM_BY_ID_SQL, &[&id]).await
     }
 }
 

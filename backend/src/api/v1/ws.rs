@@ -19,9 +19,7 @@ use futures_util::{TryFutureExt, sink::SinkExt, stream::StreamExt};
 use http::header::{ORIGIN, USER_AGENT};
 use http::{HeaderMap, StatusCode};
 use serde::Deserialize;
-use sonic_rs::JsonValueTrait;
 use std::sync::Arc;
-use dashmap::Entry;
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 use uuid::Uuid;
@@ -113,10 +111,10 @@ impl WsMsg {
 
         info!("join room={} from {} ", room_id, conn_id);
 
-        /// created room object on memory only if owners already joined
+        // created room object on memory only if owners already joined
         let db = state.pool.get().map_err(|e| WsError::from(e)).await?;
 
-        /// gets the SFU Room exist, or create it from db if available
+        // gets the SFU Room exist, or create it from db if available
         let existing = state.rooms.get(&room_id).map(|r| Arc::clone(r.value()));
         let room_arc = match existing {
             Some(room) => room,
@@ -128,7 +126,7 @@ impl WsMsg {
                     return Err(WsError(Arc::from("room not started")));
                 }
 
-                let inserted = {
+                let inserted: Arc<RoomSfu> = {
                     let entry = state.rooms.entry(room_id).or_insert(fresh);
                     Arc::clone(entry.value())
                 };
@@ -149,25 +147,23 @@ impl WsMsg {
             None => username,
         };
 
-        /// ```text
-        ///                 WebSocket (signaling: offer / answer / ice + `pc` field)
-        ///        +---------------------------------------------+
-        ///        |                                             |
-        ///   +---------+                                   +---------+
-        ///   | Browser |                                   |   SFU   |
-        ///   +---------+                                   +---------+
-        ///        |                                             |
-        ///        |  pubPc  (Publisher)                         |
-        ///        |  offer  ------------------------------->    |  browser offers
-        ///        |  <-------------------------------  answer   |  SFU only answers
-        ///        |  camera/mic RTP (simulcast q/h) ------->    |  -> on_track
-        ///        |                                             |
-        ///        |  subPc  (Subscriber)                        |
-        ///        |  <-------------------------------  offer    |  SFU offers
-        ///        |  answer  ------------------------------->   |  browser only answers
-        ///        |  <------ RTP of other peers (Output)        |  <- attach()
-        ///        |  <------ control channel (track_state)      |
-        /// ```
+        //                 WebSocket (signaling: offer / answer / ice + `pc` field)
+        //        +---------------------------------------------+
+        //        |                                             |
+        //   +---------+                                   +---------+
+        //   | Browser |                                   |   SFU   |
+        //   +---------+                                   +---------+
+        //        |                                             |
+        //        |  pubPc  (Publisher)                         |
+        //        |  offer  ------------------------------->    |  browser offers
+        //        |  <-------------------------------  answer   |  SFU only answers
+        //        |  camera/mic RTP (simulcast q/h) ------->    |  -> on_track
+        //        |                                             |
+        //        |  subPc  (Subscriber)                        |
+        //        |  <-------------------------------  offer    |  SFU offers
+        //        |  answer  ------------------------------->   |  browser only answers
+        //        |  <------ RTP of other peers (Output)        |  <- attach()
+        //        |  <------ control channel (track_state)      |
         let pub_peer = create_peer(
             conn_id,
             room_arc.clone(),
@@ -201,8 +197,8 @@ impl WsMsg {
         room.add_peer(conn_id, room_peer);
         state.conn_to_rooms.insert(conn_id, Arc::clone(&room_arc));
 
-        /// handle joining room request
-        /// if owner directy enter the room
+        // handle joining room request
+        // if owner directy enter the room
         if user_id == Some(room.owner_id) {
             answer_join(&self_sink, true, conn_id).await?;
             tracing::info!("Owner joined , current member room : {}", room.peers.len());
@@ -229,11 +225,11 @@ impl WsMsg {
             return Ok(());
         }
 
-        /// drop self from waiting room
+        // drop self from waiting room
         state.drop_from_waiting_room(room_id, self_sink);
 
-        /// if not owner send join requets to the owner of room
-        /// TODO!: check on options first, is the room need request to join or can join directly
+        // if not owner send join requets to the owner of room
+        // TODO!: check on options first, is the room need request to join or can join directly
         room.send_to_owner(
             conn_id,
             Message::text(
@@ -400,8 +396,8 @@ async fn handle_socket(socket: WebSocket, _user_agent: String, state: ServerStat
                                     }
                                 }
                                 Ok(WsMsg::Candidate {from ,candidate, line_index, mid, username_fragment }) => {
-                                    /// clone the peer connection out of the map before awaiting,
-                                    /// holding a dashmap guard across an await point can deadlock
+                                    // clone the peer connection out of the map before awaiting,
+                                    // holding a dashmap guard across an await point can deadlock
                                     let pc = state.conn_to_rooms.get(&conn_id).and_then(|room| {
                                         room.peers.get(&conn_id).map(|peer| match from.as_str() {
                                             "PUBLISHER" => Arc::clone(&peer.sub_pc),
@@ -468,10 +464,16 @@ async fn handle_socket(socket: WebSocket, _user_agent: String, state: ServerStat
             ),
         );
         room.drop_peer(conn_id).await;
+
+        // delete room if no member
+        if room.peers.len() == 0 {
+            state.rooms.remove(room.key());
+            // TODO: remove room on the database
+            // if let Ok(db) = state.pool.get().map_err(|e| WsError::from(e)).await {
+            //     _ = models::room::Room::drop(&db, room.key().to_owned()).await;
+            // }
+        }
     }
-
-    // TODO! broadcast exit to inform some user exit from the room
-    // TODO! delete room if no member
-
+        
     info!("ws disconnected");
 }

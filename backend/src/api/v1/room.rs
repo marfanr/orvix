@@ -106,7 +106,6 @@ async fn get_room(
     let room_id = room.id.expect("room id must be provided");
     let owner = room.owner.as_ref().expect("owner must be provided");
 
-    /// **TODO!: allow for anonymous user based on room options**
     let user_id: Option<Uuid> = claims.and_then(|c| c.sub.parse().ok());
     let is_owner = user_id.is_some_and(|id| room.owner_id == id);
     let is_started = is_owner || room.start_at.is_some() || state.rooms.get(&room_id).is_some();

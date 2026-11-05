@@ -2,6 +2,7 @@ use std::
 env;
 use tracing::info;
 
+use crate::ai::onnx::test_onnx;
 use crate::api::metrics::init_metrics;
 use crate::{
     api::server::{ServerState, run_server}, models::
@@ -21,6 +22,7 @@ pub mod models;
 pub mod sfu;
 pub mod telemetry;
 pub mod utils;
+pub mod ai;
 mod ffmpeg;
 
 #[derive(Default)]
@@ -65,8 +67,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         todo!("run migrations");
         return Ok(());
     }
-
-    println!("sample id : {}", nanoid::nanoid!());
 
     init_metrics();
     run_server(state, 8080).await?;

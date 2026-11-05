@@ -33,3 +33,6 @@ pub const GET_ROOM_BY_ID_SQL: &str =
      FROM room r
      JOIN users u ON u.id = r.owner_id
      WHERE r.id = $1";
+
+pub const DEL_ROOM_BY_ID_SQL: &str = 
+    "DELETE FROM room WHERE id = $1";
