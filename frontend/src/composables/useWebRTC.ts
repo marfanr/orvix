@@ -84,7 +84,7 @@ export function useWebRTC(
 
     chatChannelSub.value!.onmessage = (msg) => {
       const msg_data = JSON.parse(msg.data)
-      console.log("found new msg: ", msg.data, msg.timeStamp)
+      console.log('found new msg: ', msg.data, msg.timeStamp)
       handleIncomingChat!(msg_data.msg, msg_data.from, msg_data.time)
     }
 
@@ -192,11 +192,11 @@ export function useWebRTC(
     }
   }
 
-  const preferCodec = (
+  const preferCodec = async (
     pc: RTCPeerConnection,
     codec: SupportedVideoCodec,
     kind: string = 'video',
-  ): void => {
+  ): Promise<void> => {
     codec ??= SupportedVideoCodec.VP9
     console.log(`sellected = ${kind}/${codec.toString()}`)
     if (typeof RTCRtpSender.getCapabilities !== 'function') return
@@ -211,32 +211,39 @@ export function useWebRTC(
       return
     }
 
-    let maxBitrate = 2_000_000
-      switch (form.maxBitrate) {
-        case 'auto':
-          maxBitrate = 2_000_000
-          break
-        case '1':
-          maxBitrate = 1_000_000
-          break
-        case '2':
-          maxBitrate = 2_000_000
-          break
-        case '4':
-          maxBitrate = 4_000_000
-          break
-        case '8':
-          maxBitrate = 8_000_000
-          break
-      }
+    let maxBitrate: number | undefined = 2_000_000
+    switch (form.maxBitrate) {
+      case 'auto':
+        maxBitrate = 2_000_000
+        break
+      case '1':
+        maxBitrate = 1_000_000
+        break
+      case '2':
+        maxBitrate = 2_000_000
+        break
+      case '4':
+        maxBitrate = 4_000_000
+        break
+      case '8':
+        maxBitrate = 8_000_000
+        break
+      default:
+        maxBitrate = undefined
+    }
+
     for (const s of pc.getSenders()) {
       const p = s.getParameters()
       if (p.encodings.length == 0) continue
       for (let i = 0; i < p.encodings.length; i++) {
-        // p.encodings[i]!.maxBitrate = maxBitrate
-        p.encodings[i]!.networkPriority = form.networkPriority
+        if (maxBitrate === undefined) {
+          delete p.encodings[i]!.maxBitrate
+        } else {
+          p.encodings[i]!.maxBitrate = maxBitrate
+        }
       }
-      s.setParameters(p).then()
+
+      await s.setParameters(p)
     }
 
     for (const transceiver of pc.getTransceivers()) {
@@ -255,7 +262,7 @@ export function useWebRTC(
   const createOffer = async (): Promise<string | undefined> => {
     const pc = PublisherPeerCon.value
     if (!pc) return undefined
-    preferCodec(pc, form.preferredCodec, 'video')
+    await preferCodec(pc, form.preferredCodec, 'video')
     const offer = await pc.createOffer()
     await pc.setLocalDescription(offer)
     return pc.localDescription?.sdp ?? offer.sdp

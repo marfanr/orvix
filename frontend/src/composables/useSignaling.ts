@@ -4,7 +4,7 @@ import { ReconnectWebsocket } from '@/lib/ws'
 type MessageHandler = (msg: MessageEvent) => void
 
 export function useSignaling() {
-  const ws = new ReconnectWebsocket(`ws://${location.hostname}:8080/v1/ws`)
+  const ws = new ReconnectWebsocket(`ws://${location.hostname}:8080/ws`)
   ws.connect()
 
   const messageHandlers = new Set<MessageHandler>()

@@ -20,6 +20,7 @@ export function useVideoCallRoom(getRoomParam: () => string | string[] | undefin
     remainingRequests,
     memberChangesData,
     newMessageData,
+    localRawStream
   } = storeToRefs(callStore)
 
   const auth = useAuthStore()
@@ -106,7 +107,7 @@ export function useVideoCallRoom(getRoomParam: () => string | string[] | undefin
     handleControlChannel,
     handleIncomingChat,
   )
-  const media = useLocalMedia(participants)
+  const media = useLocalMedia(participants, localRawStream)
 
   const sendChat = (msg: string, target: string) => {
     callStore.pushChat(msg, 'me', true, Date.now())
@@ -184,6 +185,14 @@ export function useVideoCallRoom(getRoomParam: () => string | string[] | undefin
         case 'sync': {
           console.log(data)
           const members: { conn_id: string; username: string }[] = data.members
+          const ids = new Set(members.map((m) => m.conn_id))
+
+          // `sync` is authoritative for the member list. Reconcile instead of
+          // only adding, otherwise a disconnect that was missed/lost while we
+          // were joining leaves a ghost participant behind forever.
+          callStore.participants = callStore.participants.filter(
+            (p) => p.id === 0 || !p.conn_id || ids.has(p.conn_id),
+          )
 
           for (const v of members) {
             if (callStore.participants.some((m) => m.conn_id === v.conn_id)) continue

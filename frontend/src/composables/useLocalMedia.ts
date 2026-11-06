@@ -1,7 +1,7 @@
 import { ref, type Ref } from 'vue'
 import type { Participant } from '@/types/video-call'
 
-export function useLocalMedia(participants: Ref<Participant[]>) {
+export function useLocalMedia(participants: Ref<Participant[]>, localRawStream: Ref<MediaStream|null>) {
   let localStream: MediaStream | null = null
 
   const cameraOn = ref(false)
@@ -55,6 +55,8 @@ export function useLocalMedia(participants: Ref<Participant[]>) {
       if (videoTrack) {
         localStream ??= new MediaStream()
         localStream.addTrack(videoTrack)
+        localRawStream!.value = localStream
+
         me.stream = localStream
       }
 
@@ -91,6 +93,7 @@ export function useLocalMedia(participants: Ref<Participant[]>) {
         localStream ??= new MediaStream()
         localStream.addTrack(audioTrack)
         me.stream = localStream
+        localRawStream!.value = localStream
       }
 
       me.muted = false
