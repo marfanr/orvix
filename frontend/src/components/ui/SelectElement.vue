@@ -60,7 +60,7 @@ const helpOpen = computed(() => helpHovered.value || helpPinned.value)
       <select
         :id="id"
         v-model="value"
-        class="h-10 w-full appearance-none rounded-lg border border-gray-200 bg-white pr-9 pl-3 text-sm text-gray-900 transition focus:border-primary focus:ring-2 focus:ring-primary/20 focus:outline-none"
+        class="h-10 w-full select-custom rounded-lg border border-gray-200 bg-white pr-9 pl-3 text-sm text-gray-900 transition focus:border-primary focus:ring-2 focus:ring-primary/20 focus:outline-none"
       >
         <option v-for="option in options" :key="option.value" :value="option.value">
           {{ option.label }}
@@ -75,3 +75,45 @@ const helpOpen = computed(() => helpHovered.value || helpPinned.value)
     <p v-if="hint" class="text-xs text-gray-500">{{ hint }}</p>
   </div>
 </template>
+
+<style>
+.select-custom {
+  text-align: center;
+  align-items: center;
+}
+.select-custom,
+.select-custom::picker(select) {
+  appearance: base-select;
+}
+
+.select-custom::picker(select) {
+  margin-top: 9px;
+  padding: 4px;
+  border: 1px solid var(--color-gray-200);
+  border-radius: var(--radius-lg);
+  background: white;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.1);
+}
+
+.select-custom option {
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+  cursor: pointer;
+
+}
+
+.select-custom option:hover,
+.select-custom option:focus-visible {
+  background: var(--color-gray-100); /* ganti warna hover di sini */
+}
+
+.select-custom option:checked {
+  background: var(--color-primary);
+  font-weight: 600;
+}
+
+.select-custom::picker-icon {
+  visibility: hidden;
+}
+</style>
