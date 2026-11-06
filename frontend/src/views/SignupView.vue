@@ -15,7 +15,10 @@ const loading = ref(false)
 const { handleSubmit, setFieldError } = useForm({
   validationSchema: toTypedSchema(
     z.object({
-      username: z.string().min(1, 'Username is required'),
+      username: z
+        .string()
+        .min(3, 'Username must be at least 3 characters')
+        .max(32, 'Username must be at most 32 characters'),
       email: z.string().min(1, 'Email is required').email('Please enter a valid email address'),
       password: z.string().min(1, 'Password is required'),
     }),
@@ -30,8 +33,13 @@ const onSubmit = handleSubmit(async (values) => {
   if (loading.value) return
   loading.value = true
   try {
-    const res = await api.post('/auth/signup', {
+    await api.post('/user/', {
       username: values.username,
+      email: values.email,
+      password: values.password,
+    })
+
+    const res = await api.post('/auth/signin', {
       email: values.email,
       password: values.password,
     })
@@ -49,7 +57,12 @@ const onSubmit = handleSubmit(async (values) => {
   } catch (err) {
     const axiosErr = err as { response?: { data?: { error?: string }; status?: number } }
     const message = axiosErr.response?.data?.error || 'Something went wrong'
-    if (message === 'invalid credentials' || axiosErr.response?.status === 401) {
+    if (message === 'username already exists') {
+      setFieldError('username', message)
+    } else if (message === 'email already exists' || axiosErr.response?.status === 409) {
+      setFieldError('email', message)
+    } else if (axiosErr.response?.status === 422) {
+      setFieldError('username', message)
       setFieldError('email', message)
       setFieldError('password', message)
     } else {
