@@ -3,7 +3,7 @@ import router from '@/router'
 import { useAuthStore } from '@/stores/auth'
 
 export const api = axios.create({
-  baseURL: 'http://localhost:8080/v1',
+  baseURL: 'http://localhost:8080/',
   timeout: 10_000,
   headers: {
     Accept: 'application/json',
