@@ -24,11 +24,6 @@ const codecOptions = [
   { value: SupportedVideoCodec.AV1, label: 'AV1' },
 ]
 
-const priorityOptions = [
-  { value: 'low', label: 'Low' },
-  { value: 'medium', label: 'Medium' },
-  { value: 'high', label: 'High' },
-]
 
 const networkToggles: MeetingConfigToggleItem[] = [
   {
@@ -64,29 +59,11 @@ const estimatedUpload = computed(() => {
       </p>
 
       <div class="mt-5 grid gap-4 sm:grid-cols-2">
-        <SelectElement
-          :id="`${uid}-bitrate`"
-          v-model="form.maxBitrate"
-          label="Max upload bitrate"
-          :options="bitrateOptions"
-          :hint="`Video upload is ${estimatedUpload}.`"
-        />
+        <SelectElement :id="`${uid}-bitrate`" v-model="form.maxBitrate" label="Max upload bitrate"
+          :options="bitrateOptions" :hint="`Video upload is ${estimatedUpload}.`" />
 
-        <SelectElement
-          :id="`${uid}-codec`"
-          v-model="form.preferredCodec"
-          label="Preferred video codec"
-          :options="codecOptions"
-          hint="for now H.264 is required while server recording is enabled."
-        />
-
-        <SelectElement
-          :id="`${uid}-priority`"
-          v-model="form.networkPriority"
-          label="Network priority"
-          :options="priorityOptions"
-        />
-
+        <SelectElement :id="`${uid}-codec`" v-model="form.preferredCodec" label="Preferred video codec"
+          :options="codecOptions" hint="for now H.264 is required while server recording is enabled." />
 
       </div>
     </div>
@@ -95,13 +72,8 @@ const estimatedUpload = computed(() => {
       <h4 class="text-sm font-semibold text-gray-900">Transport</h4>
 
       <div class="mt-3 divide-y divide-gray-100 rounded-xl border border-gray-200">
-        <ToggleElement
-          v-for="toggle in networkToggles"
-          :key="toggle.key"
-          v-model="form[toggle.key]"
-          :label="toggle.label"
-          :description="toggle.description"
-        />
+        <ToggleElement v-for="toggle in networkToggles" :key="toggle.key" v-model="form[toggle.key]"
+          :label="toggle.label" :description="toggle.description" />
       </div>
     </div>
   </div>

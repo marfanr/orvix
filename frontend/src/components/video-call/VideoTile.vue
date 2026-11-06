@@ -1,184 +1,38 @@
 <script setup lang="ts">
-import {
-  type ComponentPublicInstance,
-  computed,
-  nextTick,
-  onBeforeUnmount,
-  onMounted,
-  ref,
-  watch,
-} from 'vue'
-import { MicIcon, MicOffIcon } from 'lucide-vue-next'
+import { type ComponentPublicInstance, computed, nextTick, ref, watch } from 'vue'
 import type { Participant } from '@/types/video-call'
-import { FilesetResolver, ImageSegmenter } from '@mediapipe/tasks-vision'
-import {
-  disposeOpenCV,
-  drawBlurred,
-  drawCover,
-  initOpenCV,
-  writeSmoothedMask,
-} from '@/lib/filter.ts'
+import { MicIcon, MicOffIcon } from 'lucide-vue-next'
+import VideoMaskCanvas from '@/components/video-call/VideoMaskCanvas.vue'
+import { useMeetingConfigStore } from '@/stores/meetingConfig.ts'
+import { storeToRefs } from 'pinia'
+import { useCallStore } from '@/stores/call.ts'
 
-type Background =
-  | { type: 'color'; value: string }
-  | { type: 'image'; image: HTMLImageElement | ImageBitmap }
-  | { type: 'blur'; radius: number }
+const meetingStore = useMeetingConfigStore()
+const { form } = storeToRefs(meetingStore)
+const callStore = useCallStore()
+const { localRawStream } = storeToRefs(callStore)
+
+
+const LOCAL_PARTICIPANT_ID = 0
+const model = ref<{
+  mask_ready: boolean
+}>({
+  mask_ready: false,
+})
 
 const props = defineProps<{
   participant: Participant
   tileClass?: string
 }>()
 
-const LOCAL_PARTICIPANT_ID = 0
-const WASM_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm'
-const MODEL_URL =
-  'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter_landscape/float16/latest/selfie_segmenter_landscape.tflite'
-const SEGMENT_WIDTH = 256
-const TARGET_FPS = 30
-const MIN_FRAME_INTERVAL = 1000 / TARGET_FPS - 2
+const showCanvas = computed(
+  () => props.participant.id === LOCAL_PARTICIPANT_ID && form.value.bgremoval != 'disabled',
+)
 
-const background: Background = { type: 'blur', radius: 32 }
+const MicStateIcon = computed(() => (props.participant.muted ? MicOffIcon : MicIcon))
 
 const videoRef = ref<HTMLVideoElement | null>(null)
 const audioRef = ref<HTMLAudioElement | null>(null)
-const canvasRef = ref<HTMLCanvasElement | null>(null)
-
-const isLocal = computed(() => props.participant.id === LOCAL_PARTICIPANT_ID)
-const showCanvas = isLocal.value
-const MicStateIcon = computed(() => (props.participant.muted ? MicOffIcon : MicIcon))
-
-const inputCanvas = document.createElement('canvas')
-const inputCtx = inputCanvas.getContext('2d', { alpha: false })!
-const maskCanvas = document.createElement('canvas')
-const maskCtx = maskCanvas.getContext('2d')!
-const blurCanvas = document.createElement('canvas')
-const blurCtx = blurCanvas.getContext('2d', { alpha: false })!
-
-let segmenter: ImageSegmenter | null = null
-let maskImage: ImageData | null = null
-let mask32: Uint32Array | null = null
-let rafId = 0
-let lastVideoTime = -1
-let lastRun = 0
-let disposed = false
-
-async function initSegmenter(): Promise<void> {
-  const vision = await FilesetResolver.forVisionTasks(WASM_URL)
-  const instance = await ImageSegmenter.createFromOptions(vision, {
-    baseOptions: { modelAssetPath: MODEL_URL, delegate: 'GPU' },
-    runningMode: 'VIDEO',
-    outputCategoryMask: true,
-    outputConfidenceMasks: false,
-  })
-
-  if (disposed) {
-    instance.close()
-    return
-  }
-  segmenter = instance
-  rafId = requestAnimationFrame(segmentLoop)
-}
-
-async function initFilters(): Promise<void> {
-  await initOpenCV()
-  if (disposed) disposeOpenCV()
-}
-
-function isNewFrame(video: HTMLVideoElement, now: number): boolean {
-  if (video.readyState < 2 || !video.videoWidth) return false
-  if (video.currentTime === lastVideoTime) return false
-  return now - lastRun >= MIN_FRAME_INTERVAL
-}
-
-function drawSegmenterInput(video: HTMLVideoElement): void {
-  const width = SEGMENT_WIDTH
-  const height = Math.max(1, Math.round((SEGMENT_WIDTH * video.videoHeight) / video.videoWidth))
-
-  if (inputCanvas.width !== width || inputCanvas.height !== height) {
-    inputCanvas.width = width
-    inputCanvas.height = height
-  }
-  inputCtx.drawImage(video, 0, 0, width, height)
-}
-
-function updateMaskCanvas(labels: Uint8Array, width: number, height: number): void {
-  if (!maskImage || !mask32 || maskImage.width !== width || maskImage.height !== height) {
-    maskCanvas.width = width
-    maskCanvas.height = height
-    maskImage = maskCtx.createImageData(width, height)
-    mask32 = new Uint32Array(maskImage.data.buffer)
-  }
-
-  writeSmoothedMask(labels, mask32, width, height)
-  maskCtx.putImageData(maskImage, 0, 0)
-}
-
-function drawBackground(
-  ctx: CanvasRenderingContext2D,
-  video: HTMLVideoElement,
-  w: number,
-  h: number,
-): void {
-  switch (background.type) {
-    case 'blur':
-      drawBlurred(ctx, blurCtx, blurCanvas, video, w, h, background.radius)
-      break
-    case 'image':
-      drawCover(ctx, background.image, w, h)
-      break
-    case 'color':
-      ctx.fillStyle = background.value
-      ctx.fillRect(0, 0, w, h)
-      break
-  }
-}
-
-function composite(canvas: HTMLCanvasElement, video: HTMLVideoElement): void {
-  const w = video.videoWidth
-  const h = video.videoHeight
-
-  if (canvas.width !== w || canvas.height !== h) {
-    canvas.width = w
-    canvas.height = h
-  }
-
-  const ctx = canvas.getContext('2d')!
-  ctx.imageSmoothingEnabled = true
-  ctx.imageSmoothingQuality = 'high'
-
-  ctx.globalCompositeOperation = 'source-over'
-  ctx.clearRect(0, 0, w, h)
-  ctx.drawImage(video, 0, 0, w, h)
-
-  ctx.globalCompositeOperation = 'destination-in'
-  ctx.drawImage(maskCanvas, 0, 0, w, h)
-
-  ctx.globalCompositeOperation = 'destination-over'
-  drawBackground(ctx, video, w, h)
-
-  ctx.globalCompositeOperation = 'source-over'
-}
-
-function segmentLoop(now: number): void {
-  rafId = requestAnimationFrame(segmentLoop)
-
-  const video = videoRef.value
-  const canvas = canvasRef.value
-  if (!video || !canvas || !segmenter) return
-  if (!isNewFrame(video, now)) return
-
-  lastRun = now
-  lastVideoTime = video.currentTime
-  drawSegmenterInput(video)
-
-  segmenter.segmentForVideo(inputCanvas, performance.now(), (result) => {
-    const mask = result.categoryMask
-    if (!mask) return
-
-    updateMaskCanvas(mask.getAsUint8Array(), mask.width, mask.height)
-    composite(canvas, video)
-  })
-}
 
 function attachStream(el: HTMLMediaElement, stream: MediaStream): void {
   if (el.srcObject !== stream) el.srcObject = stream
@@ -187,7 +41,7 @@ function attachStream(el: HTMLMediaElement, stream: MediaStream): void {
 
 async function setVideoStream(): Promise<void> {
   await nextTick()
-  const { stream } = props.participant
+  const stream  = localRawStream.value
   if (videoRef.value && stream) attachStream(videoRef.value, stream)
 }
 
@@ -196,7 +50,7 @@ async function setAudioStream(): Promise<void> {
   const { stream, muted } = props.participant
   if (!audioRef.value || !stream) return
 
-  audioRef.value.muted = isLocal.value || muted
+  audioRef.value.muted = muted
   attachStream(audioRef.value, stream)
 }
 
@@ -211,27 +65,7 @@ function setAudioRef(el: Element | ComponentPublicInstance | null): void {
 }
 
 watch(() => props.participant.stream, setVideoStream)
-watch(() => [props.participant.muted, props.participant.stream], setAudioStream)
-watch(
-  () => props.participant.cameraOff,
-  (off) => {
-    if (!off) setVideoStream()
-  },
-)
-
-onMounted(() => {
-  if (!showCanvas) return
-  initFilters().catch((e: unknown) => console.error('opencv init error:', e))
-  initSegmenter().catch((e: unknown) => console.error('segmenter init error:', e))
-})
-
-onBeforeUnmount(() => {
-  disposed = true
-  cancelAnimationFrame(rafId)
-  segmenter?.close()
-  segmenter = null
-  disposeOpenCV()
-})
+watch([() => props.participant.muted, () => props.participant.stream], setAudioStream)
 </script>
 
 <template>
@@ -249,22 +83,23 @@ onBeforeUnmount(() => {
     </div>
 
     <div v-else class="absolute inset-0">
-      <canvas
+      <VideoMaskCanvas
         v-if="showCanvas"
-        ref="canvasRef"
-        class="absolute inset-0 w-full h-full object-cover"
+        :participant="participant"
+        :video="videoRef"
+        :model-value="model"
       />
       <video
         :ref="setVideoRef"
         class="w-full h-full bg-black object-cover"
-        :class="{ 'opacity-0 pointer-events-none': showCanvas }"
+        :class="{ 'opacity-0 pointer-events-none': showCanvas && !videoRef }"
         autoplay
         playsinline
         muted
       ></video>
     </div>
 
-    <audio :ref="setAudioRef" autoplay playsinline muted />
+    <audio v-if="!showCanvas" :ref="setAudioRef" autoplay playsinline />
 
     <div
       class="absolute bottom-1 left-1 sm:bottom-2 sm:left-2 md:bottom-4 md:left-4 p-1 sm:p-1.5 md:p-2 text-[10px] sm:text-xs flex flex-row gap-x-1.5 sm:gap-x-2 md:gap-x-3 items-center bg-zinc-800/60 rounded-md text-white max-w-[calc(100%-0.5rem)] sm:max-w-[calc(100%-1rem)]"

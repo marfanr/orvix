@@ -18,6 +18,7 @@ import type { DataControlType } from '@/composables/useWebRTC.ts'
 import { useMembersPanel } from '@/composables/useMembersPanel.ts'
 import { useCallStore } from '@/stores/call.ts'
 import { storeToRefs } from 'pinia'
+import { BotIcon } from '@lucide/vue'
 
 defineProps<{
   cameraOff: boolean
@@ -141,6 +142,12 @@ const menuItems = computed<MenuItem[]>(() => [
     hideOnDesktop: true,
     onSelect: onParticipantsClick,
   },
+  {
+    key: 'ai',
+    label: 'invite AI',
+    description: 'invite AI into this room',
+    icon: BotIcon,
+  }
 ])
 
 function runMenuItem(item: MenuItem) {
@@ -290,7 +297,7 @@ onUnmounted(() => {
     <Teleport to="body">
       <div
         v-if="moreOpen"
-        class="fixed inset-0 z-50 sm:inset-auto"
+        class="fixed bottom-0 right-0 left-0 z-50 sm:inset-auto"
         :style="isDesktop ? popoverStyle : undefined"
       >
         <div

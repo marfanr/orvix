@@ -4,7 +4,8 @@ import { VideoIcon } from 'lucide-vue-next'
 import SelectElement from '@/components/ui/SelectElement.vue'
 import ToggleElement from '@/components/ui/ToggleElement.vue'
 import { useCameraPreview } from '@/composables/useCameraPreview'
-import { useMeetingConfigStore, type MeetingConfigToggleItem } from '@/stores/meetingConfig'
+import { type MeetingConfigToggleItem, useMeetingConfigStore } from '@/stores/meetingConfig'
+import RangeElement from '@/components/ui/RangeElement.vue'
 
 const store = useMeetingConfigStore()
 const form = store.form
@@ -33,6 +34,13 @@ const resolutionOptions = [
   { value: '360p', label: '360p — data saver' },
   { value: '720p', label: '720p — recommended' },
   { value: '1080p', label: '1080p — high quality' },
+]
+
+const BackgroundRemovalOptions = [
+  { value: 'disabled', label: 'disabled' },
+  { value: 'blur', label: 'blur' },
+  { value: 'image', label: 'image' },
+  { value: 'color', label: 'color' },
 ]
 
 const framerateOptions = [
@@ -69,7 +77,7 @@ const videoToggles: MeetingConfigToggleItem[] = [
         Choose the capture quality and how your camera is delivered.
       </p>
 
-      <div class="mt-4 overflow-hidden rounded-xl border border-gray-200 bg-gray-900">
+      <div class="mt-4 overflow-hidden rounded-xl border border-gray-200 bg-stone-900">
         <div class="relative aspect-video">
           <video
             v-show="videoStream"
@@ -115,14 +123,26 @@ const videoToggles: MeetingConfigToggleItem[] = [
       </div>
 
       <div class="mt-5 grid gap-4 sm:grid-cols-2">
-        <div class="sm:col-span-2">
+        <div class="col-span-3">
           <SelectElement
-            :id="`${uid}-camera`"
-            v-model="form.camera"
-            label="Camera"
-            :options="cameraOptions"
+            v-model="form.bgremoval"
+            :id="`${uid}-bg-removal`"
+            label="Background Removal"
+            :options="BackgroundRemovalOptions"
           />
+
+          <div class="my-6 flex flex-col gap-y-3" v-if="form.bgremoval != 'disabled'">
+            <h4 class="text-xs font-semibold text-gray-900">Background Removal</h4>
+            <RangeElement v-if="form.bgremoval == 'blur'" v-model="form.blurRadius" label="blur radius" description="" :min="10" :max="64" :step="5" :show-as-percentage="true" />
+          </div>
         </div>
+
+        <SelectElement
+          :id="`${uid}-camera`"
+          v-model="form.camera"
+          label="Camera"
+          :options="cameraOptions"
+        />
 
         <SelectElement
           :id="`${uid}-resolution`"
@@ -138,7 +158,7 @@ const videoToggles: MeetingConfigToggleItem[] = [
           :options="framerateOptions"
         />
 
-        <div class="sm:col-span-2">
+        <div class="sm:col-span-3">
           <SelectElement
             :id="`${uid}-content-hint`"
             v-model="form.contentHint"
