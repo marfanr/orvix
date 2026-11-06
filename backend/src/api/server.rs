@@ -23,7 +23,7 @@ use tower_http::trace::TraceLayer;
 use tracing::info;
 
 use crate::api::metrics::{metrics_handler, track_metrics};
-use crate::api::{ApiError, v1};
+use crate::api::{ApiError, auth, room, user, ws};
 use crate::sfu::room::RoomSfu;
 use crate::utils::{AccessClaims, verify_jwt};
 use headers::{Authorization, authorization::Bearer};
@@ -31,15 +31,15 @@ use http::StatusCode;
 use uuid::Uuid;
 
 #[derive(Default)]
-struct ApiV1 {}
+struct Api {}
 
-impl ApiV1 {
+impl Api {
     fn routes() -> Router<ServerState> {
         Router::new()
-            .nest("/room", v1::room::routes())
-            .nest("/user", v1::user::routes())
-            .nest("/auth", v1::auth::routes())
-            .nest("/ws", v1::ws::routes())
+            .nest("/room", room::routes())
+            .nest("/user", user::routes())
+            .nest("/auth", auth::routes())
+            .nest("/ws", ws::routes())
     }
 }
 
@@ -105,7 +105,7 @@ pub async fn run_server(state: ServerState, port: u16) -> std::io::Result<()> {
 
     let app = Router::new()
         .route("/metrics", axum::routing::get(metrics_handler))
-        .nest("/v1", ApiV1::routes())
+        .merge(Api::routes())
         .with_state(state)
         .layer(TraceLayer::new_for_http())
         .layer(middleware::from_fn(track_metrics))

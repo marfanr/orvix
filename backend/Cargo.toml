@@ -44,6 +44,8 @@ rtc = "0.21.1"
 rtp = "0.17.2"
 oxideav-bitstream = "0.0.3"
 sdp-types = "0.3.0"
+ort = { version = "2.0.0-rc.15", features = ["webgpu"] }
+hound = "3.5.1"
 
 [target.'cfg(not(target_env = "msvc"))'.dependencies]
 jemallocator = { version = "0.5.4", features = ["stats", "background_threads"] }
@@ -58,3 +60,6 @@ codegen-units = 1
 incremental = true
 debug = "line-tables-only"
 
+[features]
+default = []
+webgpu = ["ort/webgpu"]

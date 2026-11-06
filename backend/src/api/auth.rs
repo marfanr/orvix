@@ -122,7 +122,7 @@ async fn signin(
         .http_only(true)
         .secure(true)
         .same_site(cookie::SameSite::None)
-        .path("/v1/auth/refresh")
+        .path("/auth/refresh")
         .max_age(CookieDuration::days(7))
         .build();
 
@@ -210,7 +210,7 @@ async fn refresh_token(
         .http_only(true)
         .secure(true)
         .same_site(cookie::SameSite::None)
-        .path("/v1/auth/refresh")
+        .path("/auth/refresh")
         .max_age(CookieDuration::days(7))
         .build();
 
@@ -226,32 +226,24 @@ async fn refresh_token(
 async fn logout(
     State(state): State<ServerState>,
     jar: CookieJar,
-) -> Result<(StatusCode, CookieJar), ApiError> {
-    let Some(refresh) = jar.get("refresh_token") else {
-        return Err(ApiError::NotFound);
-    };
-
-    let claims = verify_jwt::<RefreshClaims>(refresh.value()).map_err(|e| {
-        info!("invalid jwt: {}", e);
-        ApiError::NotFound
-    })?;
-
-    let family_id: Uuid = claims
-        .family_id
-        .parse()
-        .map_err(|_| ApiError::Rejection(StatusCode::BAD_REQUEST, "invalid family_id".into()))?;
-
-    let db = state.pool.get().await.map_err(poll_error)?;
-
-    rt::revoke_family(&db, family_id).await?;
+) -> (StatusCode, CookieJar) {
+    if let Some(refresh) = jar.get("refresh_token") {
+        if let Ok(claims) = verify_jwt::<RefreshClaims>(refresh.value()) {
+            if let Ok(family_id) = claims.family_id.parse::<Uuid>() {
+                if let Ok(db) = state.pool.get().await {
+                    let _ = rt::revoke_family(&db, family_id).await;
+                }
+            }
+        }
+    }
 
     let cookie = Cookie::build(("refresh_token", ""))
         .http_only(true)
         .secure(true)
         .same_site(cookie::SameSite::None)
-        .path("/v1/auth/refresh")
+        .path("/auth/refresh")
         .max_age(CookieDuration::seconds(0))
         .build();
 
-    Ok((StatusCode::OK, jar.add(cookie)))
+    (StatusCode::OK, jar.add(cookie))
 }

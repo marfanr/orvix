@@ -7,10 +7,13 @@ use axum::{
 use serde::de::DeserializeOwned;
 use validator::Validate;
 
+pub mod auth;
 pub mod error;
 pub mod metrics;
+pub mod room;
 pub mod server;
-mod v1;
+pub mod user;
+pub mod ws;
 
 pub use error::{ApiError, WsError, poll_error};
 

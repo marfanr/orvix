@@ -22,7 +22,7 @@ static METRICS_HANDLE: LazyLock<PrometheusHandle> = LazyLock::new(|| {
 
 pub async fn track_metrics(req: Request, next: Next) -> Response {
     let path = req.uri().path().to_string();
-    let is_metrics = path == "/metrics" || path == "/v1/metrics";
+    let is_metrics = path == "/metrics";
     let response = next.run(req).await;
     if !is_metrics {
         increment_requests();
