@@ -97,7 +97,7 @@ export const MEETING_CONFIG_DEFAULTS: MeetingConfigForm = {
   logIce: false,
   bitrateGraph: true,
   bgremoval: 'disabled',
-  blurRadius: 0,
+  blurRadius: 15,
 }
 
 export const useMeetingConfigStore = defineStore('meetingConfig', () => {

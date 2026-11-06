@@ -41,6 +41,15 @@ const SEGMENT_FPS = 15
 const SEGMENT_INTERVAL = 1000 / SEGMENT_FPS - 2
 const STREAM_FPS = 30
 
+// Watchdog: Keeps repainting the canvas if requestVideoFrameCallback halts (hidden tab,
+// unrendered video, broken loop), ensuring captureStream continues sending frames.
+const WATCHDOG_MS = 100
+
+// dont render more faster than STREAM_FPS (0.8 for tolerance jitter timestamp)
+const MIN_FRAME_MS = (1000 / STREAM_FPS) * 0.8
+
+const FALLBACK_DELEGATE = 'CPU'
+
 const backgroundRef = computed((): Background => {
   switch (form.value.bgremoval) {
     case 'color':
@@ -61,29 +70,65 @@ const blurCanvas = document.createElement('canvas')
 const blurCtx = blurCanvas.getContext('2d', { alpha: false })!
 
 let segmenter: ImageSegmenter | null = null
+let useFallbackBlur = false
 let maskImage: ImageData | null = null
 let mask32: Uint32Array | null = null
 let outCtx: CanvasRenderingContext2D | null = null
 let videoEl: HTMLVideoElement | null = null
 let frameCb = 0
+let watchdog = 0
 let lastRun = 0
+let lastPaint = 0
+let lastErrLog = 0
 let maskReady = false
 let published = false
 let disposed = false
 
+function logThrottled(label: string, e: unknown): void {
+  const t = performance.now()
+  if (t - lastErrLog < 2000) return
+  lastErrLog = t
+  console.error(`[VideoMaskCanvas] ${label}`, e)
+}
+
 async function initSegmenter(): Promise<void> {
   const vision = await FilesetResolver.forVisionTasks(WASM_URL)
-  const instance = await ImageSegmenter.createFromOptions(vision, {
-    baseOptions: { modelAssetPath: SELFIE_MODEL_URL, delegate: 'GPU' },
-    runningMode: 'VIDEO',
-    outputCategoryMask: true,
-    outputConfidenceMasks: false,
-  })
+
+  let instance: ImageSegmenter | null = null
+  let lastError: Error | null = null
+
+  // Try GPU first, then CPU if GPU fails. If both fail we fall back to a simple
+  // canvas-based blur (no segmentation mask).
+  for (const delegate of ['GPU', FALLBACK_DELEGATE] as const) {
+    try {
+      instance = await ImageSegmenter.createFromOptions(vision, {
+        baseOptions: { modelAssetPath: SELFIE_MODEL_URL, delegate },
+        runningMode: 'VIDEO',
+        outputCategoryMask: true,
+        outputConfidenceMasks: false,
+      })
+      console.log(`[VideoMaskCanvas] segmenter initialized with delegate: ${delegate}`)
+      useFallbackBlur = false
+      break
+    } catch (e) {
+      lastError = e as Error
+      console.warn(`[VideoMaskCanvas] segmenter init failed with ${delegate}:`, e)
+    }
+  }
 
   if (disposed) {
-    instance.close()
+    instance?.close()
     return
   }
+
+  if (!instance) {
+    console.error('[VideoMaskCanvas] segmenter init failed on all delegates', lastError)
+    // No segmentation mask we will use a simple blur fallback.
+    segmenter = null
+    useFallbackBlur = true
+    return
+  }
+
   segmenter = instance
 }
 
@@ -137,6 +182,7 @@ function drawBackground(
   const bg = backgroundRef.value
   switch (bg.type) {
     case 'blur':
+      // Blur the whole video as background behind the masked person
       drawBlurred(ctx, blurCtx, blurCanvas, video, w, h, bg.radius)
       break
     case 'image':
@@ -149,10 +195,8 @@ function drawBackground(
   }
 }
 
-function composite(canvas: HTMLCanvasElement, video: HTMLVideoElement): void {
-  const w = video.videoWidth
-  const h = video.videoHeight
-
+function prepareCanvas(canvas: HTMLCanvasElement, w: number, h: number): CanvasRenderingContext2D {
+  // trigger reconfigure encoder (only its needed)
   if (canvas.width !== w || canvas.height !== h) {
     canvas.width = w
     canvas.height = h
@@ -162,6 +206,19 @@ function composite(canvas: HTMLCanvasElement, video: HTMLVideoElement): void {
   const ctx = outCtx
   ctx.imageSmoothingEnabled = true
   ctx.imageSmoothingQuality = 'high'
+  return ctx
+}
+
+function publishStream(canvas: HTMLCanvasElement): void {
+  if (published) return
+  published = true
+  emits('stream', canvas.captureStream(STREAM_FPS))
+}
+
+function composite(canvas: HTMLCanvasElement, video: HTMLVideoElement): void {
+  const w = video.videoWidth
+  const h = video.videoHeight
+  const ctx = prepareCanvas(canvas, w, h)
 
   ctx.globalCompositeOperation = 'source-over'
   ctx.clearRect(0, 0, w, h)
@@ -175,28 +232,80 @@ function composite(canvas: HTMLCanvasElement, video: HTMLVideoElement): void {
 
   ctx.globalCompositeOperation = 'source-over'
 
-  if (!published) {
-    published = true
-    model.value.mask_ready = true
-    emits('stream', canvas.captureStream(STREAM_FPS))
+  if (!published) model.value.mask_ready = true
+  publishStream(canvas)
+}
+
+function fallbackComposite(canvas: HTMLCanvasElement, video: HTMLVideoElement): void {
+  const w = video.videoWidth
+  const h = video.videoHeight
+  const ctx = prepareCanvas(canvas, w, h)
+
+  ctx.globalCompositeOperation = 'source-over'
+  ctx.clearRect(0, 0, w, h)
+
+  const bg = backgroundRef.value
+  if (bg.type === 'blur' && useFallbackBlur) {
+    // Simple canvas blur – no mask needed.
+    drawBlurred(ctx, blurCtx, blurCanvas, video, w, h, bg.radius)
+  } else {
+    // Raw video until the segmentation mask is ready.
+    ctx.drawImage(video, 0, 0, w, h)
+  }
+
+  // Emit early so peers receive a continuous stream while the model loads.
+  publishStream(canvas)
+}
+
+function paintRaw(canvas: HTMLCanvasElement, video: HTMLVideoElement): void {
+  try {
+    const w = video.videoWidth
+    const h = video.videoHeight
+    const ctx = prepareCanvas(canvas, w, h)
+    ctx.globalCompositeOperation = 'source-over'
+    ctx.clearRect(0, 0, w, h)
+    ctx.drawImage(video, 0, 0, w, h)
+  } catch (e) {
+    logThrottled('paintRaw failed', e)
+  }
+}
+
+function render(now: number): void {
+  const video = videoEl
+  const canvas = canvasRef.value
+  if (disposed || !video || !canvas) return
+  if (!video.videoWidth || video.readyState < 2) return
+
+  lastPaint = now
+
+  try {
+    const hasSegmenter = !!segmenter
+
+    if (hasSegmenter && now - lastRun >= SEGMENT_INTERVAL) {
+      lastRun = now
+      try {
+        segment(video)
+      } catch (e) {
+        logThrottled('segment failed', e)
+      }
+    }
+
+    if (maskReady && hasSegmenter) composite(canvas, video)
+    else fallbackComposite(canvas, video)
+  } catch (e) {
+    logThrottled('render failed', e)
+    paintRaw(canvas, video)
   }
 }
 
 function onFrame(now: number): void {
   const video = videoEl
-  const canvas = canvasRef.value
-  if (!video || !canvas) return
+  if (!video) return
 
   frameCb = video.requestVideoFrameCallback(onFrame)
 
-  if (!segmenter || !video.videoWidth) return
-
-  if (now - lastRun >= SEGMENT_INTERVAL) {
-    lastRun = now
-    segment(video)
-  }
-
-  if (maskReady) composite(canvas, video)
+  if (now - lastPaint < MIN_FRAME_MS) return
+  render(now)
 }
 
 function stopRender(): void {
@@ -223,10 +332,16 @@ watch(
 onMounted(() => {
   initFilters().catch((e: unknown) => console.error('opencv init error:', e))
   initSegmenter().catch((e: unknown) => console.error('segmenter init error:', e))
+
+  watchdog = window.setInterval(() => {
+    const now = performance.now()
+    if (now - lastPaint > WATCHDOG_MS * 1.5) render(now)
+  }, WATCHDOG_MS)
 })
 
 onBeforeUnmount(() => {
   disposed = true
+  clearInterval(watchdog)
   stopRender()
   segmenter?.close()
   segmenter = null

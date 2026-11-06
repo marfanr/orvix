@@ -1,23 +1,51 @@
+// SPDX-FileCopyrightText: 2026 Mohammad Arfan
+//
+// SPDX-License-Identifier: AGPL-3.0
+
 import { ref, type Ref } from 'vue'
 import type { Participant } from '@/types/video-call'
 
-export function useLocalMedia(participants: Ref<Participant[]>, localRawStream: Ref<MediaStream|null>) {
+// Kamera tidak perlu >30fps: encoder dibatasi 30fps dan pipeline blur/segmentasi
+// jalan per frame di main thread. 60-120fps hanya membakar CPU lalu frame terlambat/macet.
+const VIDEO_CONSTRAINTS: MediaTrackConstraints = {
+  width: { ideal: 1280 },
+  height: { ideal: 720 },
+  frameRate: { ideal: 30, max: 30 },
+}
+
+export function useLocalMedia(participants: Ref<Participant[]>) {
+  // Holder track lokal (mutable). Yang dipublikasikan ke UI selalu snapshot-nya.
   let localStream: MediaStream | null = null
 
   const cameraOn = ref(false)
   const micOn = ref(false)
 
+  const busy = { camera: false, mic: false }
+
   const getMe = () => participants.value.find((p) => p.id == 0)
 
+  // Publikasikan snapshot BARU setiap track berubah. Identitas stream yang berubah itulah
+  // yang memicu watcher di VideoTile (rebuild output canvas + audio). Memutasi stream yang
+  // sama tidak memicu apa pun karena MediaStream bukan reaktif.
+  //
+  // JANGAN menulis ke localRawStream di sini: itu stream OUTPUT canvas milik VideoTile.
+  // Menimpanya dengan stream mentah membuat video yang dikirim ke peer berpindah
+  // canvas -> kamera mentah dan tidak pernah kembali.
+  const publish = () => {
+    const me = getMe()
+    if (!me) return
+    const tracks = localStream?.getTracks() ?? []
+    me.stream = tracks.length > 0 ? new MediaStream(tracks) : null
+  }
+
   const init = async () => {
+    if (!cameraOn.value && !micOn.value) return
     try {
-      const me = getMe()
-      if (!me?.cameraOff || micOn.value) {
-        localStream = await navigator.mediaDevices.getUserMedia({
-          video: cameraOn.value,
-          audio: micOn.value,
-        })
-      }
+      localStream = await navigator.mediaDevices.getUserMedia({
+        video: cameraOn.value ? VIDEO_CONSTRAINTS : false,
+        audio: micOn.value,
+      })
+      publish()
     } catch (error) {
       console.error(error)
     }
@@ -25,81 +53,75 @@ export function useLocalMedia(participants: Ref<Participant[]>, localRawStream: 
 
   const toggleCamera = async () => {
     const me = getMe()
-    if (!me) return
+    if (!me || busy.camera) return
+    busy.camera = true
 
-    // turn off
-    if (!me.cameraOff) {
-
-      localStream?.getVideoTracks().forEach((t) => {
-        t.stop()
-        localStream?.removeTrack(t)
-      })
-      me.cameraOff = true
-      return
-    }
-
-    // turn on
     try {
+      // turn off
+      if (!me.cameraOff) {
+        localStream?.getVideoTracks().forEach((t) => {
+          t.stop()
+          localStream?.removeTrack(t)
+        })
+        me.cameraOff = true
+        publish()
+        return
+      }
+
+      // turn on
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: true,
+        video: VIDEO_CONSTRAINTS,
         audio: false,
       })
 
       const videoTrack = stream.getVideoTracks()[0]
-      await videoTrack?.applyConstraints({
-        frameRate: { ideal: 60, min: 10, max: 120 },
-        width: 1280,
-        height: 720,
-      })
+      if (!videoTrack) return
 
-      if (videoTrack) {
-        localStream ??= new MediaStream()
-        localStream.addTrack(videoTrack)
-        localRawStream!.value = localStream
-
-        me.stream = localStream
-      }
-
+      localStream ??= new MediaStream()
+      localStream.addTrack(videoTrack)
       me.cameraOff = false
+      publish()
     } catch (e) {
-      console.log(e)
+      console.error(e)
+    } finally {
+      busy.camera = false
     }
   }
 
   const toggleMic = async () => {
     const me = getMe()
-    if (!me) return
-
-    // mute
-    if (!me.muted) {
-      localStream?.getAudioTracks().forEach((t) => {
-        t.stop()
-        localStream?.removeTrack(t)
-      })
-      me.muted = true
-      return
-    }
-
-    // unmute
+    if (!me || busy.mic) return
+    busy.mic = true
 
     try {
+      // mute
+      if (!me.muted) {
+        localStream?.getAudioTracks().forEach((t) => {
+          t.stop()
+          localStream?.removeTrack(t)
+        })
+        me.muted = true
+        publish()
+        return
+      }
+
+      // unmute
       const stream = await navigator.mediaDevices.getUserMedia({
         video: false,
         audio: true,
       })
 
       const audioTrack = stream.getAudioTracks()[0]
-      if (audioTrack) {
-        localStream ??= new MediaStream()
-        localStream.addTrack(audioTrack)
-        me.stream = localStream
-        localRawStream!.value = localStream
-      }
+      if (!audioTrack) return
 
+      localStream ??= new MediaStream()
+      localStream.addTrack(audioTrack)
       me.muted = false
+      publish()
     } catch (e) {
-      console.log(e)
-      return
+      console.error(e)
+    } finally {
+      busy.mic = false
     }
   }
 

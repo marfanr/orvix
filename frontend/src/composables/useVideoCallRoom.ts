@@ -20,7 +20,7 @@ export function useVideoCallRoom(getRoomParam: () => string | string[] | undefin
     remainingRequests,
     memberChangesData,
     newMessageData,
-    localRawStream
+    localRawStream,
   } = storeToRefs(callStore)
 
   const auth = useAuthStore()
@@ -38,11 +38,8 @@ export function useVideoCallRoom(getRoomParam: () => string | string[] | undefin
   )
 
   const onRemoteTrack = (e: RTCTrackEvent) => {
-    console.log('new track', e)
-
     const stream = e.streams[0] ?? new MediaStream([e.track])
     const streamId = stream.id
-    console.log('onRemoteTrack event:', e.track.kind, e.streams, streamId)
     const target =
       callStore.participants.find((p) => p.conn_id && streamId.includes(p.conn_id)) ??
       callStore.participants.find((p) => p.id !== 0)
@@ -52,12 +49,15 @@ export function useVideoCallRoom(getRoomParam: () => string | string[] | undefin
       return
     }
 
-    if (target.stream) {
-      target.stream.addTrack(e.track)
-      target.stream = new MediaStream(target.stream.getTracks())
-    } else {
+    if (!target.stream) {
       target.stream = stream
+    } else if (
+      target.stream !== stream &&
+      !target.stream.getTracks().some((t) => t.id === e.track.id)
+    ) {
+      target.stream.addTrack(e.track)
     }
+
     if (e.track.kind === 'video') {
       target.cameraOff = false
     }
@@ -71,7 +71,6 @@ export function useVideoCallRoom(getRoomParam: () => string | string[] | undefin
       if (e.track.kind === 'audio') {
         target.muted = true
       }
-      console.log('ended track')
     }
   }
 
@@ -82,15 +81,12 @@ export function useVideoCallRoom(getRoomParam: () => string | string[] | undefin
         const target = callStore.participants.find((p) => p.conn_id === data.from)
         if (target && data.kind === 'video') target.cameraOff = data.muted
         if (target && data.kind === 'audio') target.muted = data.muted
-        console.log('track state updated : ', target?.cameraOff, target?.muted)
         break
       }
       case 'track_ended': {
+        // mark if camera off
         const target = callStore.participants.find((p) => p.conn_id === data.from)
-        if (target && data.kind === 'video') {
-          target.cameraOff = true
-          target.stream?.getVideoTracks().forEach((t) => t.stop())
-        }
+        if (target && data.kind === 'video') target.cameraOff = true
         break
       }
     }
@@ -107,7 +103,7 @@ export function useVideoCallRoom(getRoomParam: () => string | string[] | undefin
     handleControlChannel,
     handleIncomingChat,
   )
-  const media = useLocalMedia(participants, localRawStream)
+  const media = useLocalMedia(participants)
 
   const sendChat = (msg: string, target: string) => {
     callStore.pushChat(msg, 'me', true, Date.now())
@@ -117,44 +113,63 @@ export function useVideoCallRoom(getRoomParam: () => string | string[] | undefin
   const cameraOff = computed(() => media.getMe()?.cameraOff ?? true)
   const muted = computed(() => media.getMe()?.muted ?? true)
 
+  const outgoingStream = (): MediaStream | null => {
+    const out = localRawStream.value
+    if (out && out.getVideoTracks().some((t) => t.readyState === 'live')) return out
+    return media.getMe()?.stream ?? null
+  }
+
+  let renegotiateQueued = false
+
+  const negotiate = async (): Promise<void> => {
+    const pc = webrtc.peerCon.value
+    if (!pc) return
+    if (pc.signalingState !== 'stable') {
+      renegotiateQueued = true
+      return
+    }
+    renegotiateQueued = false
+
+    const sdp = await webrtc.createOffer()
+    if (sdp) signaling.sendOffer(sdp)
+  }
+
   const onJoinedRoom = async (): Promise<void> => {
     const pc = webrtc.peerCon.value
     if (!pc) return
 
-    const stream = media.getMe()?.stream
-    if (stream) webrtc.addLocalStream(stream)
+    const stream = outgoingStream()
+    if (stream) await webrtc.addLocalStream(stream)
 
     const sdp = await webrtc.createOffer()
     if (sdp) signaling.sendOffer(sdp)
   }
 
-  const renegotiate = async (): Promise<void> => {
-    const pc = webrtc.peerCon.value
-    if (!pc || pc.signalingState !== 'stable') return
+  const syncOutgoing = async (): Promise<void> => {
+    const stream = outgoingStream()
+    if (!stream) return
 
-    const sdp = await webrtc.createOffer()
-    if (sdp) signaling.sendOffer(sdp)
+    const needsNegotiation = await webrtc.addLocalStream(stream)
+    if (needsNegotiation) await negotiate()
   }
 
   const toggleCamera = async () => {
     await media.toggleCamera()
-
-    const stream = media.getMe()?.stream
-    if (!stream) return
-
-    await webrtc.addLocalStream(stream)
-    await renegotiate()
+    await syncOutgoing()
   }
 
   const toggleMic = async () => {
     await media.toggleMic()
-
-    const stream = media.getMe()?.stream
-    if (!stream) return
-
-    await webrtc.addLocalStream(stream)
-    await renegotiate()
+    await syncOutgoing()
   }
+
+  watch(
+    () => localRawStream.value,
+    async () => {
+      if (room.value.status !== 'joined') return // onJoinedRoom yang akan mengirim
+      await syncOutgoing()
+    },
+  )
 
   watch(
     () => room.value.status === 'joined',
@@ -183,7 +198,6 @@ export function useVideoCallRoom(getRoomParam: () => string | string[] | undefin
 
         // synchronize current members
         case 'sync': {
-          console.log(data)
           const members: { conn_id: string; username: string }[] = data.members
           const ids = new Set(members.map((m) => m.conn_id))
 
@@ -224,8 +238,8 @@ export function useVideoCallRoom(getRoomParam: () => string | string[] | undefin
         }
         // handle offer from server publisher
         case 'answer': {
-          console.log('answer', data)
           await webrtc.setRemoteAnswer(data.sdp)
+          if (renegotiateQueued) await negotiate()
           break
         }
 
@@ -293,7 +307,6 @@ export function useVideoCallRoom(getRoomParam: () => string | string[] | undefin
   }
 
   onMounted(async () => {
-
     try {
       await webrtc.init()
     } catch (error) {
