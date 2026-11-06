@@ -136,15 +136,20 @@ The backend handles WebRTC peer connections, media forwarding, authentication, r
 
 ```mermaid
 flowchart LR
-    subgraph Browser["Browser · Vue 3"]
+    subgraph Browser["Browser · Vue 3 client"]
         UI["UI · Pinia · Router"]
-        RTC["WebRTC · DataChannel"]
+        PUB["Peer 1 · Publisher PC<br/>mic · cam · screen"]
+        SUB["Peer 2 · Subscriber PC<br/>remote tracks · chat/control"]
     end
 
     subgraph Backend["Rust backend · Axum"]
         API["REST API"]
         WS["WebSocket signaling"]
-        SFU["RoomSfu · peers · tracks"]
+        subgraph SFU["RoomSfu"]
+            PP["Publisher peer · receives"]
+            SP["Subscriber peer · sends"]
+            TR["Track fan-out · simulcast"]
+        end
     end
 
     DB[("PostgreSQL")]
@@ -154,7 +159,10 @@ flowchart LR
 
     UI -->|"HTTPS · JSON"| API
     UI <-->|"WSS · signaling"| WS
-    RTC <-->|"SRTP · data channels"| SFU
+    PUB -->|"SRTP · publish"| PP
+    PP --> TR
+    TR -->|"SRTP · subscribe"| SP
+    SP --> SUB
     API --> DB
     SFU --> DB
     API --> OTEL
@@ -162,6 +170,8 @@ flowchart LR
     SFU --> REC
     OTEL --> OBS
 ```
+
+Each participant owns **two peer connections**: a **publisher PC** that sends local tracks into the SFU, and a **subscriber PC** that receives the fan-out tracks from other participants. Chat and control messages travel over WebRTC data channels.
 
 The backend exposes four route groups under the same Axum server:
 
