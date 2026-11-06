@@ -4,6 +4,8 @@ import { SupportedBitrate, SupportedVideoCodec } from '@/types/video-call'
 
 export type MeetingConfigSectionKey = 'network' | 'video' | 'audio' | 'recording' | 'advanced'
 
+export type BgRemovalKey = 'disabled' | 'blur' | 'image' | 'color'
+
 export type MeetingConfigToggleKey =
   | 'adaptiveBitrate'
   | 'simulcast'
@@ -27,7 +29,6 @@ export interface MeetingConfigToggleItem {
 export interface MeetingConfigForm {
   maxBitrate: SupportedBitrate
   preferredCodec: SupportedVideoCodec
-  networkPriority: RTCPriorityType
   iceTransport: string
   adaptiveBitrate: boolean
   simulcast: boolean
@@ -58,12 +59,13 @@ export interface MeetingConfigForm {
   logSdp: boolean
   logIce: boolean
   bitrateGraph: boolean
+  bgremoval: BgRemovalKey
+  blurRadius: number
 }
 
 export const MEETING_CONFIG_DEFAULTS: MeetingConfigForm = {
   maxBitrate: SupportedBitrate.B1,
   preferredCodec: SupportedVideoCodec.VP9,
-  networkPriority: 'high',
   iceTransport: 'all',
   adaptiveBitrate: true,
   simulcast: true,
@@ -94,6 +96,8 @@ export const MEETING_CONFIG_DEFAULTS: MeetingConfigForm = {
   logSdp: false,
   logIce: false,
   bitrateGraph: true,
+  bgremoval: 'disabled',
+  blurRadius: 0,
 }
 
 export const useMeetingConfigStore = defineStore('meetingConfig', () => {

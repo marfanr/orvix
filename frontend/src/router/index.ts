@@ -53,13 +53,14 @@ const router = createRouter({
 
 router.beforeEach(async (to) => {
   const auth = useAuthStore()
-  const restored = await auth.refreshAccessToken()
+  const isAuthPage = to.path === '/signin' || to.path === '/signup'
+
+  if (!isAuthPage && !auth.authenticated) {
+    await auth.refreshAccessToken()
+  }
 
   if (to.meta.requiresAuth && !auth.authenticated) {
-    // one-shot restore from the httpOnly refresh cookie
-    if (!restored) {
-      return { path: '/signin' }
-    }
+    return { path: '/signin' }
   }
 
   const titleFromParams = to.params?.pageTitle

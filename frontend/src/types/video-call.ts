@@ -7,6 +7,8 @@ export interface Participant {
   stream: MediaStream | null
 }
 
+export type NewMeetingMode = 'now' | 'scheduled'
+
 export interface JoinRequest {
   username: string
   conn_id: string

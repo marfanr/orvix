@@ -20,7 +20,7 @@ export const useAuthStore = defineStore('auth', () => {
 
   async function refreshAccessToken(): Promise<boolean> {
     try {
-      // refresh token lives in an httpOnly cookie (path=/v1/auth/refresh)
+      // refresh token lives in an httpOnly cookie (path=/auth/refresh)
       const res = await api.post('/auth/refresh')
       const newAccessToken = res.data?.token
 
@@ -42,6 +42,14 @@ export const useAuthStore = defineStore('auth', () => {
     authenticated.value = false
   }
 
+  async function logout() {
+    try {
+      await api.post('/auth/logout')
+    } finally {
+      clearAuth()
+    }
+  }
+
   return {
     accessToken,
     refreshToken,
@@ -50,5 +58,6 @@ export const useAuthStore = defineStore('auth', () => {
     setAccessToken,
     refreshAccessToken,
     clearAuth,
+    logout,
   }
 })
