@@ -3,7 +3,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { createFocusTrap, type FocusTrap } from 'focus-trap'
 import { MicOffIcon, VideoOffIcon } from 'lucide-vue-next'
 import { useMembersPanel } from '@/composables/useMembersPanel'
-import PopUpComponent from '@/components/video-call/PopUpComponent.vue'
+import PopUpComponent from '@/components/ui/PopUpComponent.vue'
 
 const { participants, isOpen, close } = useMembersPanel()
 

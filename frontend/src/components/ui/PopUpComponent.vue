@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import { XIcon } from 'lucide-vue-next'
 import { PopUpWidth } from '@/types/video-call.ts'
 
@@ -25,6 +25,15 @@ const props = defineProps<{
 const emits = defineEmits<{
   close: []
 }>()
+
+const onKeydown = (e: KeyboardEvent) => {
+  if (e.key !== 'Escape') return
+  else if (props.isOpen) emits('close')
+}
+onMounted(() => document.addEventListener('keydown', onKeydown))
+onUnmounted(() => {
+  document.removeEventListener('keydown', onKeydown)
+})
 </script>
 
 <template>

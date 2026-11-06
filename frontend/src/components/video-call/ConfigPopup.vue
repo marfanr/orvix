@@ -2,7 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch, type Component } from 'vue'
 import { createFocusTrap, type FocusTrap } from 'focus-trap'
 import { HardDriveIcon, MicIcon, SlidersHorizontalIcon, VideoIcon, WifiIcon } from 'lucide-vue-next'
-import PopUpComponent from '@/components/video-call/PopUpComponent.vue'
+import PopUpComponent from '@/components/ui/PopUpComponent.vue'
 import ConfigSidebar from '@/components/video-call/config/ConfigSidebar.vue'
 import NetworkConfigSection from '@/components/video-call/config/sections/NetworkConfigSection.vue'
 import VideoConfigSection from '@/components/video-call/config/sections/VideoConfigSection.vue'
