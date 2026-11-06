@@ -19,7 +19,6 @@ import NewMeetingPopup from '@/components/home/NewMeetingPopup.vue'
 import { useAuthStore } from '@/stores/auth'
 import type { NewMeetingMode } from '@/types/video-call'
 
-/* ---------- navigation ---------- */
 const navigationItems = ref([
   { name: 'Meet', icon: 'video', active: true },
   { name: 'Contacts', icon: 'users', active: false },
@@ -32,7 +31,6 @@ const setActive = (name: string) => {
   }))
 }
 
-/* ---------- profile menu ---------- */
 const showProfileMenu = ref(false)
 const toggleProfileMenu = () => (showProfileMenu.value = !showProfileMenu.value)
 const closeProfileMenu = () => (showProfileMenu.value = false)

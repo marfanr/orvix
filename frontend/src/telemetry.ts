@@ -16,6 +16,7 @@ const otlpTraceUrl = (): string => {
 }
 
 export function initTelemetry(): void {
+  if (import.meta.env.VITE_OTEL_ENABLED !== 'true') return
   if (initialized) return
   initialized = true
 
