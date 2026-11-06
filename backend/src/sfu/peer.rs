@@ -7,23 +7,21 @@ use crate::sfu::data_channel::handle_data_channel;
 use crate::sfu::room::{RoomSfu, renegotiate};
 use axum::extract::ws::Message;
 use futures_util::{FutureExt, select};
+use rtc::ice::mdns::MulticastDnsMode;
 use rtc::ice::network_type::NetworkType;
 use rtc::interceptor::Registry;
-use webrtc::peer_connection::RTCRtcpMuxPolicy;
 use rtc::peer_connection::configuration::interceptor_registry::{
     configure_simulcast_extension_headers, register_default_interceptors,
 };
-use rtc::rtp_transceiver::rtp_sender::RtpCodecKind;
-use rtc::rtp_transceiver::{RTCRtpTransceiverDirection, RTCRtpTransceiverInit};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
-use rtc::ice::mdns::MulticastDnsMode;
 use tokio::sync::mpsc;
 use tokio::time::{Instant, timeout};
 use tracing::{info, warn};
 use uuid::Uuid;
 use webrtc::data_channel::{DataChannel, DataChannelEvent};
 use webrtc::media_stream::track_remote::{TrackRemote, TrackRemoteEvent};
+use webrtc::peer_connection::RTCRtcpMuxPolicy;
 use webrtc::peer_connection::crypto::providers::RingProvider;
 use webrtc::peer_connection::{
     MediaEngine, PeerConnection, PeerConnectionBuilder, PeerConnectionEventHandler,
@@ -65,7 +63,6 @@ pub async fn create_peer(
         .with_multicast_dns_mode(MulticastDnsMode::Disabled)
         .with_network_types(vec![NetworkType::Udp4])
         .build();
-
 
     let mut media_engine = MediaEngine::default();
     media_engine
@@ -128,7 +125,7 @@ impl PeerConnectionEventHandler for PcHandler {
             "sdpMLineIndex": &init.sdp_mline_index,
             "usernameFragment": &init.username_fragment,
         })
-            .to_string();
+        .to_string();
 
         if let Some(ws_conn) = self.ws_conn.clone() {
             if ws_conn.send(Message::Text(msg.into())).await.is_err() {
@@ -156,13 +153,13 @@ impl PeerConnectionEventHandler for PcHandler {
     }
 
     async fn on_data_channel(&self, dc: Arc<dyn DataChannel>) {
-            let conn_id = self.conn_id;
-            let room = Arc::clone(&self.room);
+        let conn_id = self.conn_id;
+        let room = Arc::clone(&self.room);
 
-            tokio::spawn(Box::pin(async move {
-                let label = Arc::from(dc.label().await.unwrap_or_default());
-                loop {
-                    select! {
+        tokio::spawn(Box::pin(async move {
+            let label = Arc::from(dc.label().await.unwrap_or_default());
+            loop {
+                select! {
                     event = dc.poll().fuse() => {
                         match event {
                             Some(DataChannelEvent::OnMessage(msg)) =>
@@ -177,141 +174,141 @@ impl PeerConnectionEventHandler for PcHandler {
                         }
                     }
                 }
-                }
-            }));
+            }
+        }));
+    }
+
+    async fn on_track(&self, track: Arc<dyn TrackRemote>) {
+        println!(
+            "found track ({}) from {}",
+            track.ssrcs().await.len(),
+            self.peer_type.to_string()
+        );
+        if track.ssrcs().await.is_empty() {
+            warn!("track without ssrc");
+            return;
         }
 
-        async fn on_track(&self, track: Arc<dyn TrackRemote>) {
-            println!(
-                "found track ({}) from {}",
-                track.ssrcs().await.len(),
-                self.peer_type.to_string()
-            );
-            if track.ssrcs().await.is_empty() {
-                warn!("track without ssrc");
-                return;
-            }
+        let con_id = self.conn_id.clone();
+        let room = self.room.clone();
+        let kind = track.kind().await;
 
-            let con_id = self.conn_id.clone();
-            let room = self.room.clone();
-            let kind = track.kind().await;
+        let mut published = None;
+        let is_video = kind == rtc::rtp_transceiver::rtp_sender::RtpCodecKind::Video;
 
-            let mut published = None;
-            let is_video = kind == rtc::rtp_transceiver::rtp_sender::RtpCodecKind::Video;
+        tokio::spawn(async move {
+            let idle_timeout = Duration::from_millis(500);
+            let pli_interval = Duration::from_millis(250);
+            let pli_window = Duration::from_secs(3);
 
-            tokio::spawn(async move {
-                let idle_timeout = Duration::from_millis(500);
-                let pli_interval = Duration::from_millis(250);
-                let pli_window = Duration::from_secs(3);
+            let mut pli_until = Instant::now() + pli_window;
+            let mut last_pli: Option<Instant> = None;
+            let mut last_rtp = Instant::now();
 
-                let mut pli_until = Instant::now() + pli_window;
-                let mut last_pli: Option<Instant> = None;
-                let mut last_rtp = Instant::now();
+            let mut selected: Option<u32> = None;
+            let mut last_outputs = 0usize;
 
-                let mut selected: Option<u32> = None;
-                let mut last_outputs = 0usize;
+            loop {
+                match timeout(idle_timeout, track.poll()).await {
+                    Ok(Some(TrackRemoteEvent::OnOpen(init))) => {
+                        let ssrc = init.ssrc;
 
-                loop {
-                    match timeout(idle_timeout, track.poll()).await {
-                        Ok(Some(TrackRemoteEvent::OnOpen(init))) => {
-                            let ssrc = init.ssrc;
+                        let rid = init.rid.as_deref().unwrap_or(FORWARD_RID).to_owned();
+                        info!("NEW TRACK=conn {con_id}: layer opened rid={rid:?} ssrc={ssrc}");
 
-                            let rid = init.rid.as_deref().unwrap_or(FORWARD_RID).to_owned();
-                            info!("NEW TRACK=conn {con_id}: layer opened rid={rid:?} ssrc={ssrc}");
-
-                            if rid != FORWARD_RID {
-                                continue;
-                            }
-
-                            let Some(codec) = track.codec(ssrc).await else {
-                                continue;
-                            };
-
-                            selected = Some(ssrc);
-
-                            info!("publisher conn {con_id}");
-                            let p = room.publish_track(con_id, kind, codec, rid, ssrc).await;
-                            p.set_remote_track(Arc::clone(&track));
-                            published = Some(p);
+                        if rid != FORWARD_RID {
+                            continue;
                         }
-                        Ok(Some(TrackRemoteEvent::OnRtpPacket(pkt))) => {
-                            let Some(p) = published.as_ref() else {
-                                continue;
-                            };
 
-                            let Some(fwd_ssrc) = p.simulcast_layers.get(FORWARD_RID).map(|v| *v) else {
-                                continue;
-                            };
+                        let Some(codec) = track.codec(ssrc).await else {
+                            continue;
+                        };
 
-                            if pkt.header.ssrc != fwd_ssrc {
-                                continue;
-                            }
+                        selected = Some(ssrc);
 
-                            last_rtp = Instant::now();
-                            if room.set_track_active(p, true).await {
-                                pli_until = Instant::now() + pli_window;
-                                info!("conn {con_id}: track resumed");
-                            }
-                            p.forward(&pkt).await;
-                        }
-                        Ok(Some(TrackRemoteEvent::OnEnded)) => {
-                            info!("conn {con_id}: track layer ended explicitly");
-                            break;
-                        }
-                        Ok(None) => {
-                            info!("conn {con_id}: stream channel closed");
-                            break;
-                        }
-                        Ok(Some(_)) | Err(_) => {}
+                        info!("publisher conn {con_id}");
+                        let p = room.publish_track(con_id, kind, codec, rid, ssrc).await;
+                        p.set_remote_track(Arc::clone(&track));
+                        published = Some(p);
                     }
+                    Ok(Some(TrackRemoteEvent::OnRtpPacket(pkt))) => {
+                        let Some(p) = published.as_ref() else {
+                            continue;
+                        };
 
-                    let (Some(p), Some(active_ssrc)) = (published.as_ref(), selected) else {
-                        continue;
-                    };
+                        let Some(fwd_ssrc) = p.simulcast_layers.get(FORWARD_RID).map(|v| *v) else {
+                            continue;
+                        };
 
-                    if last_rtp.elapsed() > idle_timeout && room.set_track_active(p, false).await {
-                        info!("conn {con_id}: active layer idle, paused track");
+                        if pkt.header.ssrc != fwd_ssrc {
+                            continue;
+                        }
+
+                        last_rtp = Instant::now();
+                        if room.set_track_active(p, true).await {
+                            pli_until = Instant::now() + pli_window;
+                            info!("conn {con_id}: track resumed");
+                        }
+                        p.forward(&pkt).await;
                     }
-
-                    // subscriber baru: ulangi burst PLI supaya keyframe tidak hilang
-                    // sebelum subscriber selesai negosiasi
-                    let outputs_now = p.outputs.load().len();
-                    if outputs_now > last_outputs {
-                        pli_until = Instant::now() + pli_window;
+                    Ok(Some(TrackRemoteEvent::OnEnded)) => {
+                        info!("conn {con_id}: track layer ended explicitly");
+                        break;
                     }
-                    last_outputs = outputs_now;
+                    Ok(None) => {
+                        info!("conn {con_id}: stream channel closed");
+                        break;
+                    }
+                    Ok(Some(_)) | Err(_) => {}
+                }
 
-                    let wants_keyframe = p.is_recording() && !p.has_keyframe();
+                let (Some(p), Some(active_ssrc)) = (published.as_ref(), selected) else {
+                    continue;
+                };
 
-                    if is_video
-                        && p.is_active()
-                        && (Instant::now() < pli_until || wants_keyframe)
-                        && last_pli.map_or(true, |t| t.elapsed() >= pli_interval)
-                    {
-                        let pli = Box::new(
+                if last_rtp.elapsed() > idle_timeout && room.set_track_active(p, false).await {
+                    info!("conn {con_id}: active layer idle, paused track");
+                }
+
+                // subscriber baru: ulangi burst PLI supaya keyframe tidak hilang
+                // sebelum subscriber selesai negosiasi
+                let outputs_now = p.outputs.load().len();
+                if outputs_now > last_outputs {
+                    pli_until = Instant::now() + pli_window;
+                }
+                last_outputs = outputs_now;
+
+                let wants_keyframe = p.is_recording() && !p.has_keyframe();
+
+                if is_video
+                    && p.is_active()
+                    && (Instant::now() < pli_until || wants_keyframe)
+                    && last_pli.map_or(true, |t| t.elapsed() >= pli_interval)
+                {
+                    let pli = Box::new(
                             rtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication {
                                 sender_ssrc: 0,
                                 media_ssrc: active_ssrc,
                             },
                         );
-                        if let Err(e) = track.write_rtcp(vec![pli]).await {
-                            warn!("conn {con_id}: failed to send PLI: {e}");
-                        }
-                        last_pli = Some(Instant::now());
+                    if let Err(e) = track.write_rtcp(vec![pli]).await {
+                        warn!("conn {con_id}: failed to send PLI: {e}");
                     }
+                    last_pli = Some(Instant::now());
+                }
+            }
+
+            // CLEANUP SAAT LAYER FORWARD TERPUTUS
+            if let Some(p) = published.as_ref() {
+                if let Some(sel) = selected {
+                    p.simulcast_layers.retain(|_, v| *v != sel);
                 }
 
-                // CLEANUP SAAT LAYER FORWARD TERPUTUS
-                if let Some(p) = published.as_ref() {
-                    if let Some(sel) = selected {
-                        p.simulcast_layers.retain(|_, v| *v != sel);
-                    }
-
-                    if p.simulcast_layers.is_empty() {
-                        room.unpublish_track(p).await;
-                        info!("conn {con_id}: all layers dropped, track successfully unpublished");
-                    }
+                if p.simulcast_layers.is_empty() {
+                    room.unpublish_track(p).await;
+                    info!("conn {con_id}: all layers dropped, track successfully unpublished");
                 }
-            });
-        }
+            }
+        });
     }
+}

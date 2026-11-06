@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0
 
 use crate::sfu::data_channel::{ChatMessageInbound, ChatMessageOutbound};
+use crate::sfu::room::RoomSfu;
 use axum::extract::ws::Message;
 use futures_util::FutureExt;
 use rtc::data_channel::RTCDataChannelInit;
@@ -14,7 +15,6 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 use webrtc::data_channel::{DataChannel, DataChannelEvent};
 use webrtc::peer_connection::PeerConnection;
-use crate::sfu::room::RoomSfu;
 
 pub struct RoomPeer {
     pub user_id: Option<Uuid>,
@@ -34,9 +34,17 @@ impl RoomPeer {
         publisher_pc: Arc<dyn PeerConnection>,
         subscriber_pc: Arc<dyn PeerConnection>,
         ws_tx: Option<mpsc::Sender<Message>>,
-        room: Arc<RoomSfu>
+        room: Arc<RoomSfu>,
     ) -> Result<Arc<Self>, webrtc::error::Error> {
-        let ctrl = publisher_pc.create_data_channel("control", None).await?;
+        let ctrl = publisher_pc
+            .create_data_channel(
+                "control",
+                Some(RTCDataChannelInit {
+                    negotiated: Some(0),
+                    ..Default::default()
+                }),
+            )
+            .await?;
         let chat_receiver = subscriber_pc
             .create_data_channel(
                 "chat",
