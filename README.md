@@ -47,6 +47,14 @@
 
 <br />
 
+<!-- PROJECT PREVIEW -->
+<div align="center">
+  <img src=".assets/ss.png" alt="Orvix in-call interface with video tile, participant controls, chat, and reactions" width="100%" />
+  <p align="center"><em>The in-call experience: video tiles, participant controls, chat, and reactions.</em></p>
+</div>
+
+<br />
+
 <!-- TABLE OF CONTENTS -->
 <details>
   <summary>Table of Contents</summary>
