@@ -114,10 +114,17 @@ impl WsMsg {
         // created room object on memory only if owners already joined
         let db = state.pool.get().map_err(|e| WsError::from(e)).await?;
 
-        // gets the SFU Room exist, or create it from db if available
-        let existing = state.rooms.get(&room_id).map(|r| Arc::clone(r.value()));
-        let room_arc = match existing {
-            Some(room) => room,
+        // gets the SFU Room exist, or create it from db if available.
+        // `register_join` is called while holding the `state.rooms` shard guard so
+        // a concurrent teardown of the last peer cannot remove the room between
+        // us reading it and marking it as in-use.
+        let existing = state.rooms.get(&room_id).map(|r| {
+            let room = Arc::clone(r.value());
+            let token = room.register_join();
+            (room, token)
+        });
+        let (room_arc, _join_token) = match existing {
+            Some(pair) => pair,
             None => {
                 let model = models::room::Room::get(&db, room_id).await?;
                 let fresh = Arc::new(RoomSfu::from(&model));
@@ -126,11 +133,12 @@ impl WsMsg {
                     return Err(WsError(Arc::from("room not started")));
                 }
 
-                let inserted: Arc<RoomSfu> = {
+                {
                     let entry = state.rooms.entry(room_id).or_insert(fresh);
-                    Arc::clone(entry.value())
-                };
-                inserted
+                    let room = Arc::clone(entry.value());
+                    let token = room.register_join();
+                    (room, token)
+                }
             }
         };
         let room: &RoomSfu = room_arc.as_ref();
@@ -359,30 +367,48 @@ async fn handle_socket(socket: WebSocket, _user_agent: String, state: ServerStat
                                         state.waiting_room.entry(room).or_default().push(tx.clone());
                                     }
                                 }
-                                /// only forwarding the message from client
+                                // only forwarding the message from client
                                 Ok(WsMsg::AnswerRequest {conn_id, room_id}) => {
-                                    if let Some(c) = state.ws_conn.get(&conn_id) {
-                                        /// allow entry into the room
-                                        answer_join(c.value(), true, conn_id).await.map_err(
-                                            |e| warn!("answer_join: {e}")
-                                        ).unwrap();
+                                    // Clone the handles out of the DashMap guards before
+                                    // awaiting: holding a guard across `.await` can block
+                                    // every other task that touches the same shard.
+                                    let joiner_tx = state
+                                        .ws_conn
+                                        .get(&conn_id)
+                                        .map(|c| c.value().clone());
+                                    let room = state
+                                        .rooms
+                                        .get(&room_id)
+                                        .map(|r| Arc::clone(r.value()));
 
-                                        /// TODO: broadcast to all user on rooms that someone has joined this room
-                                        if let Some(room) = state.rooms.get(&room_id) {
-                                            sync_room_member(c.value(), &room, &conn_id).await.map_err(
-                                                |e| warn!("sync room member: {e}")
-                                            ).unwrap();
-
-                                            let username = room.peers.get(&conn_id)
-                                                .map(|p| p.username.clone())
-                                                .unwrap_or(Arc::from("Anonymous"));
-
-                                            room.broadcast(conn_id, Message::text(
-                                                sonic_rs::json!({
-                                                "type": "welcome", "from": {"conn_id": conn_id, "username": username}})
-                                                .to_string(),
-                                            ));
-                                        };
+                                    if let (Some(joiner_tx), Some(room)) = (joiner_tx, room) {
+                                        // Only admit a connection that is still a member.
+                                        // The joiner may have disconnected while the host was
+                                        // deciding; announcing it afterwards would broadcast a
+                                        // `welcome` *after* its `disconnect` -> ghost member.
+                                        if let Some(username) = room
+                                            .peers
+                                            .get(&conn_id)
+                                            .map(|p| Arc::clone(&p.username))
+                                        {
+                                            if let Err(e) =
+                                                answer_join(&joiner_tx, true, conn_id).await
+                                            {
+                                                warn!("answer_join: {e}");
+                                            } else if let Err(e) =
+                                                sync_room_member(&joiner_tx, &room, &conn_id).await
+                                            {
+                                                warn!("sync room member: {e}");
+                                            } else if room.peers.contains_key(&conn_id) {
+                                                room.broadcast(conn_id, Message::text(
+                                                    sonic_rs::json!({
+                                                    "type": "welcome", "from": {"conn_id": conn_id, "username": username}})
+                                                    .to_string(),
+                                                ));
+                                            }
+                                        } else {
+                                            warn!("admit {conn_id}: peer already left");
+                                        }
                                     };
                                 }
                                 Ok(WsMsg::Offer { sdp }) => {
@@ -446,13 +472,25 @@ async fn handle_socket(socket: WebSocket, _user_agent: String, state: ServerStat
 
     // clear connection
     state.ws_conn.remove(&conn_id);
-    if let Some(room) = state.conn_to_rooms.get(&conn_id) {
+
+    // Take the room out of the conn map first: this releases the DashMap guard
+    // before any `.await` (holding it across awaits can block other tasks) and
+    // makes stale `conn_id -> room` lookups stop resolving immediately.
+    let room = state.conn_to_rooms.remove(&conn_id).map(|(_, room)| room);
+
+    if let Some(room) = room {
         println!("delete {} from room", &conn_id);
         let username = room
             .peers
             .get(&conn_id)
             .map(|p| p.username.clone())
             .unwrap_or(Arc::from("Anonymous"));
+
+        // Remove the peer BEFORE broadcasting the disconnect. `sync_room_member`
+        // snapshots `room.peers`, so if the disconnect is broadcast first, a peer
+        // joining in between would receive a member list that still contains this
+        // conn and would never see the disconnect event -> ghost member.
+        room.drop_peer(conn_id).await;
 
         room.broadcast(
             conn_id,
@@ -463,17 +501,15 @@ async fn handle_socket(socket: WebSocket, _user_agent: String, state: ServerStat
                 .to_string(),
             ),
         );
-        room.drop_peer(conn_id).await;
 
-        // delete room if no member
-        if room.peers.len() == 0 {
-            state.rooms.remove(room.key());
-            // TODO: remove room on the database
-            // if let Ok(db) = state.pool.get().map_err(|e| WsError::from(e)).await {
-            //     _ = models::room::Room::drop(&db, room.key().to_owned()).await;
-            // }
-        }
+        // Delete the room only if it is still empty. `remove_if` is atomic per
+        // shard and `can_be_removed` also accounts for joins that are in flight,
+        // so a joiner that grabbed this room cannot end up in an orphaned room.
+        // Note: the key is `room.id`, not the `conn_to_rooms` key.
+        state
+            .rooms
+            .remove_if(&room.id, |_, r| Arc::ptr_eq(r, &room) && r.can_be_removed());
     }
-        
+
     info!("ws disconnected");
 }

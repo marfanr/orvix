@@ -1,6 +1,8 @@
-use crate::models::{ModelError, exec};
-use crate::models::constant::{CREATE_ROOM_SQL, DEL_ROOM_BY_ID_SQL, GET_ROOM_BY_ALIAS_SQL, GET_ROOM_BY_ID_SQL};
+use crate::models::constant::{
+    CREATE_ROOM_SQL, DEL_ROOM_BY_ID_SQL, GET_ROOM_BY_ALIAS_SQL, GET_ROOM_BY_ID_SQL,
+};
 use crate::models::{FromRow, StandardModel, fetch_one};
+use crate::models::{ModelError, exec};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use deadpool_postgres::Object;
@@ -14,7 +16,7 @@ use uuid::Uuid;
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct RoomOption {
-    pub max_participants: Option<u32>,
+    pub waiting_room: Option<bool>,
 }
 
 #[derive(Debug, Clone)]
@@ -30,15 +32,21 @@ pub struct Room {
 }
 
 impl Room {
-    pub fn new(alias: &str, owner_id: Uuid, passcode: Option<&str>) -> Self {
+    pub fn new(
+        alias: &str,
+        owner_id: Uuid,
+        passcode: Option<&str>,
+        title: Option<&str>,
+        option: Option<Value>,
+    ) -> Self {
         Self {
             id: None,
             alias: Arc::from(alias),
             owner_id,
             passcode: passcode.map(Arc::from),
             owner: None,
-            title: None,
-            options: None,
+            title: title.map(Arc::from),
+            options: option,
             start_at: None,
         }
     }
@@ -68,7 +76,7 @@ impl Room {
         fetch_one(db, GET_ROOM_BY_ID_SQL, &[&id], "room not found").await
     }
 
-    pub async fn drop(db: &Object, id: Uuid) -> Result<(), ModelError>{
+    pub async fn drop(db: &Object, id: Uuid) -> Result<(), ModelError> {
         exec(db, DEL_ROOM_BY_ID_SQL, &[&id]).await
     }
 }
@@ -113,7 +121,6 @@ fn room_write_error(e: tokio_postgres::Error) -> ModelError {
     }
 }
 
-
 impl FromRow for Room {
     fn from_row(r: &Row) -> Result<Self, ModelError> {
         let id: Uuid = r.try_get("id").map_err(ModelError::from)?;
@@ -144,7 +151,7 @@ mod tests {
 
     #[test]
     fn new_room_has_no_id_and_no_options() {
-        let room = Room::new("demo", Uuid::now_v7(), None);
+        let room = Room::new("demo", Uuid::now_v7(), None, None, None);
 
         assert!(room.id.is_none());
         assert!(room.options.is_none());
@@ -154,24 +161,24 @@ mod tests {
 
     #[test]
     fn options_as_reads_typed_payload() {
-        let room = Room::new("demo", Uuid::now_v7(), None)
-            .with_options(serde_json::json!({ "max_participants": 10 }));
+        let room = Room::new("demo", Uuid::now_v7(), None, None, None)
+            .with_options(serde_json::json!({ "waiting_room": true }));
 
         let options: RoomOption = room.options_as().unwrap().unwrap();
 
-        assert_eq!(options.max_participants, Some(10));
+        assert_eq!(options.waiting_room, Some(true));
     }
 
     #[test]
     fn options_as_returns_none_without_payload() {
-        let room = Room::new("demo", Uuid::now_v7(), None);
+        let room = Room::new("demo", Uuid::now_v7(), None, None, None);
 
         assert!(room.options_as::<RoomOption>().unwrap().is_none());
     }
 
     #[test]
     fn options_as_reports_invalid_payload() {
-        let room = Room::new("demo", Uuid::now_v7(), None)
+        let room = Room::new("demo", Uuid::now_v7(), None, None, None)
             .with_options(serde_json::json!("not-an-object"));
 
         assert!(room.options_as::<RoomOption>().is_err());

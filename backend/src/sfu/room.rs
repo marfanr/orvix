@@ -12,10 +12,9 @@ use rtc::rtp_transceiver::rtp_sender::{RTCRtpCodec, RtpCodecKind};
 use rtc::rtp_transceiver::{RTCRtpTransceiverDirection, RTCRtpTransceiverInit};
 use sonic_rs::Serialize;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tracing::{info, warn};
 use uuid::Uuid;
-use webrtc::peer_connection::PeerConnection;
 
 pub enum RoomMemberstype {
     Waiting,
@@ -28,6 +27,17 @@ pub struct RoomSfu {
     pub peers: DashMap<Uuid, Arc<RoomPeer>>,
     pub tracks: DashMap<Uuid, Vec<Arc<PublishedTrack>>>,
     pub recording: AtomicBool,
+    pub pending_joins: AtomicUsize,
+}
+
+/// Keeps `RoomSfu::pending_joins` incremented for as long as a join is in
+/// flight and decrements it when the join completes or fails.
+pub struct JoinToken(Arc<RoomSfu>);
+
+impl Drop for JoinToken {
+    fn drop(&mut self) {
+        self.0.pending_joins.fetch_sub(1, Ordering::AcqRel);
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -40,8 +50,19 @@ pub struct TrackState {
 }
 
 impl RoomSfu {
+    /// Mark a join as in flight. Caller *must* hold the `state.rooms` shard
+    /// guard while calling this so it cannot race with room teardown.
+    pub fn register_join(self: &Arc<Self>) -> JoinToken {
+        self.pending_joins.fetch_add(1, Ordering::AcqRel);
+        JoinToken(Arc::clone(self))
+    }
+
+    pub fn can_be_removed(&self) -> bool {
+        self.peers.is_empty() && self.pending_joins.load(Ordering::Acquire) == 0
+    }
+
     pub fn add_peer(&self, conn_id: Uuid, peer: Arc<RoomPeer>) -> bool {
-        if self.peers.iter().any(|p| p.user_id == Some(conn_id)) {
+        if self.peers.iter().any(|p| p.key() == &conn_id) {
             return false;
         }
         self.peers.insert(conn_id, peer);
@@ -57,10 +78,17 @@ impl RoomSfu {
             }
         }
 
-        for entry in self.tracks.iter_mut() {
-            for track in entry.value().iter() {
-                track.drop_output(conn_id).await;
-            }
+        // Snapshot the outputs first: holding a DashMap guard across an await
+        // blocks every other task touching this map (e.g. publish_track).
+        let outputs: Vec<Arc<PublishedTrack>> = self
+            .tracks
+            .iter()
+            .map(|entry| entry.value().clone())
+            .flatten()
+            .collect();
+
+        for track in outputs {
+            track.drop_output(conn_id).await;
         }
     }
 
@@ -398,6 +426,7 @@ impl From<&models::room::Room> for RoomSfu {
             owner_id: v.owner_id,
             tracks: DashMap::new(),
             recording: AtomicBool::new(false),
+            pending_joins: AtomicUsize::new(0),
         }
     }
 }
@@ -414,6 +443,7 @@ mod tests {
             peers: DashMap::new(),
             tracks: DashMap::new(),
             recording: AtomicBool::new(false),
+            pending_joins: AtomicUsize::new(0),
         }
     }
 

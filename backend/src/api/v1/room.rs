@@ -21,10 +21,13 @@ use crate::api::{
 };
 use crate::models;
 use crate::models::StandardModel;
+use crate::models::room::RoomOption;
 use crate::utils::{AccessClaims, validate_uuid};
 
 #[derive(Deserialize, Validate)]
 struct CreateRoomReq<'a> {
+    #[serde(borrow)]
+    title: Option<Cow<'a, str>>,
     #[validate(length(min = 1))]
     #[serde(borrow)]
     alias: Cow<'a, str>,
@@ -89,7 +92,15 @@ async fn create_room(
 
     let db = state.pool.get().await.map_err(poll_error)?;
 
-    let room = models::room::Room::new(&req.alias, user_id, req.passcode.as_deref());
+    let options = sonic_rs::from_str(&req.options).ok();
+
+    let room = models::room::Room::new(
+        &req.alias,
+        user_id,
+        req.passcode.as_deref(),
+        req.title.as_deref(),
+        options
+    );
     let room_id = room.create(&db).await?.to_string();
 
     Ok((StatusCode::OK, FastJson(CreateRoomRes { id: room_id })))
