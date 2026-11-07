@@ -165,7 +165,7 @@ watch([() => props.participant.muted, () => props.participant.stream], setAudioS
 
 <template>
   <div
-    class="relative overflow-hidden rounded-sm min-w-0 min-h-0 h-full w-full bg-stone-900 text-white flex items-center justify-center"
+    class="relative overflow-hidden  min-w-0 min-h-0 h-full w-full bg-stone-900 text-white flex items-center justify-center"
     :class="tileClass">
     <div v-if="participant.cameraOff"
       class="size-16 sm:size-20 md:size-24 shrink-0 rounded-full bg-brown-ribbon-800 flex items-center justify-center">

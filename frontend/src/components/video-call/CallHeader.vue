@@ -1,7 +1,10 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
-import { Grid3X3Icon, LockIcon, SettingsIcon } from 'lucide-vue-next'
-import { useConfigPanel } from '@/composables/useConfigPanel.tsx'
+import { computed, nextTick, ref, watch, type Component } from 'vue';
+import { GridIcon, LockIcon, PanelRight, Presentation, SettingsIcon, UserRound } from 'lucide-vue-next';
+import { useConfigPanel } from '@/composables/useConfigPanel.tsx';
+import { useCallStore } from '@/stores/call';
+import { storeToRefs } from 'pinia';
+import { viewLayoutCycle, ViewLayoutMode } from '@/types/video-call';
 
 const props = defineProps<{
   roomTitle: string
@@ -10,6 +13,9 @@ const props = defineProps<{
 const emit = defineEmits<{
   'update:roomTitle': [value: string]
 }>()
+
+const store = useCallStore()
+const { viewLayout } = storeToRefs(store)
 
 const editing = ref(false)
 const draft = ref(props.roomTitle)
@@ -59,6 +65,25 @@ const commit = () => {
   emit('update:roomTitle', value)
 }
 
+
+const layoutMeta: Record<ViewLayoutMode, { icon: Component; label: string }> = {
+  [ViewLayoutMode.Grid]: { icon: GridIcon, label: 'Grid' },
+  [ViewLayoutMode.Speaker]: { icon: UserRound, label: 'Speaker' },
+  [ViewLayoutMode.Sidebar]: { icon: PanelRight, label: 'Sidebar' }, // TODO: ikon sidebar
+  [ViewLayoutMode.Presentation]: { icon: Presentation, label: 'Presentation' }, // TODO: ikon presentation
+}
+
+const currentLayout = computed(() => layoutMeta[viewLayout.value])
+
+
+const toggleLayoutMode = () => {
+  const i = viewLayoutCycle.indexOf(viewLayout.value)
+  const v = viewLayoutCycle[(i + 1) % viewLayoutCycle.length]
+  if (v) viewLayout.value = v
+  else console.warn('Invalid view layout mode:', v)
+}
+
+
 const cancel = () => {
   editing.value = false
   draft.value = displayTitle.value
@@ -107,10 +132,11 @@ const cancel = () => {
         <button
           type="button"
           class="flex flex-row gap-x-1 items-center cursor-pointer rounded-md px-2 py-1 text-xs sm:text-sm text-gray-700 transition hover:bg-gray-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+          @click="toggleLayoutMode"
         >
-          <Grid3X3Icon :size="16" class="sm:hidden" aria-hidden="true" />
-          <Grid3X3Icon :size="18" class="hidden sm:block" aria-hidden="true" />
-          <span class="hidden xs:inline sm:inline">View</span>
+          <component :is="currentLayout.icon" :size="16" class="sm:hidden" aria-hidden="true" />
+          <component :is="currentLayout.icon" :size="18" class="hidden sm:block" aria-hidden="true" />
+          <span class="hidden xs:inline sm:inline">{{currentLayout.label}}</span>
         </button>
       </li>
     </ul>

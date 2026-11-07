@@ -1,5 +1,10 @@
+// SPDX-FileCopyrightText: 2026 Mohammad Arfan
+//
+// SPDX-License-Identifier: AGPL-3.0
+
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
+import { ViewLayoutMode } from '@/types/video-call'
 import type {
   ChatMessage,
   FloatingReaction,
@@ -10,7 +15,6 @@ import type {
   Participant,
   RoomStatus,
 } from '@/types/video-call'
-
 export interface RoomState {
   id: string | undefined
   owner: string | undefined
@@ -143,6 +147,8 @@ export const useCallStore = defineStore('call', () => {
     if (idx !== -1) participants.value.splice(idx, 1)
   }
 
+  const viewLayout = ref<ViewLayoutMode>(ViewLayoutMode.Speaker)
+
   return {
     room,
     participants,
@@ -170,5 +176,6 @@ export const useCallStore = defineStore('call', () => {
     toggleChat,
     closeChat,
     localRawStream,
+    viewLayout,
   }
 })

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Mohammad Arfan
+//
+// SPDX-License-Identifier: AGPL-3.0
+
 <script setup lang="ts">
 import { computed, useId } from 'vue'
 import { VideoIcon } from 'lucide-vue-next'
@@ -77,7 +81,7 @@ const videoToggles: MeetingConfigToggleItem[] = [
       <div class="mt-4 overflow-hidden rounded-xl border border-gray-200 bg-stone-900">
         <div class="relative aspect-video">
           <video v-show="videoStream" ref="videoPreviewEl" autoplay muted playsinline class="h-full w-full object-cover"
-            :class="form.mirrorPreview ? '-scale-x-100' : ''"></video>
+            :class="form.mirrorCamera ? '-scale-x-100' : ''"></video>
 
           <div v-if="!videoStream"
             class="absolute inset-0 flex flex-col items-center justify-center gap-2 px-4 text-center">
@@ -104,35 +108,27 @@ const videoToggles: MeetingConfigToggleItem[] = [
         </div>
       </div>
 
-      <div class="mt-5 grid gap-4 sm:grid-cols-2 ">
-        <div class="col-span-3">
-          <SelectElement v-model="form.bgremoval" :id="`${uid}-bg-removal`" label="Background Removal"
+      <div class="mt-5 grid grid-cols-1 items-start gap-x-4 gap-y-5 md:grid-cols-2">
+        <div class="flex flex-col gap-y-4 md:col-span-2">
+          <SelectElement v-model="form.bgremoval" :id="`${uid}-bg-removal`" label="Background removal"
             :options="BackgroundRemovalOptions" />
 
-          <div class="my-6 flex flex-col gap-y-3" v-if="form.bgremoval != 'disabled'">
-            <h4 class="text-xs font-semibold text-gray-900">Background Removal</h4>
-            <RangeElement v-if="form.bgremoval == 'blur'" v-model="form.blurRadius" label="blur radius" description=""
-              :min="10" :max="64" :step="5" :show-as-percentage="true" />
-          </div>
+          <RangeElement v-if="form.bgremoval === 'blur'" v-model="form.blurRadius" label="Blur radius" description=""
+            :min="10" :max="64" :step="5" :show-as-percentage="true" />
         </div>
 
         <SelectElement :id="`${uid}-camera`" v-model="form.camera" label="Camera" :options="cameraOptions" />
-
-
         <SelectElement :id="`${uid}-resolution`" v-model="form.resolution" label="Resolution"
           :options="resolutionOptions" />
 
-        <div class="col-span-3">
-          <ToggleElement v-model="form.mirrorCamera" label="Mirror my video"
-            description="Flip your camera preview horizontally." />
-        </div>
-
         <SelectElement :id="`${uid}-framerate`" v-model="form.framerate" label="Frame rate"
           :options="framerateOptions" />
+        <SelectElement :id="`${uid}-content-hint`" v-model="form.contentHint" label="Content hint"
+          :options="contentHintOptions" hint="Detail keeps text sharp but may use more bandwidth." />
 
-        <div class="sm:col-span-3">
-          <SelectElement :id="`${uid}-content-hint`" v-model="form.contentHint" label="Content hint"
-            :options="contentHintOptions" hint="Detail keeps text sharp but may use more bandwidth." />
+        <div class="md:col-span-2">
+          <ToggleElement v-model="form.mirrorCamera" label="Mirror my video"
+            description="Flip your camera preview horizontally." />
         </div>
       </div>
     </div>
@@ -142,7 +138,7 @@ const videoToggles: MeetingConfigToggleItem[] = [
 
       <div class="mt-3 divide-y divide-gray-100 rounded-xl border border-gray-200">
         <ToggleElement v-for="toggle in videoToggles" :key="toggle.key" v-model="form[toggle.key]" :label="toggle.label"
-          :description="toggle.description" :disabled="true"/>
+          :description="toggle.description" :disabled="true" />
       </div>
     </div>
   </div>

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Mohammad Arfan
+//
+// SPDX-License-Identifier: AGPL-3.0
+
 export interface Participant {
   id: number
   conn_id: string | undefined
@@ -53,7 +57,7 @@ export enum SupportedVideoCodec {
   H264 = 'H264',
   VP8 = 'VP8',
   VP9 = 'VP9',
-  AV1 = 'AVI'
+  AV1 = 'AVI',
 }
 
 export enum SupportedBitrate {
@@ -68,3 +72,17 @@ export type Background =
   | { type: 'color'; value: string }
   | { type: 'image'; image: HTMLImageElement | ImageBitmap }
   | { type: 'blur'; radius: number }
+
+export enum ViewLayoutMode {
+  Grid = 'grid',
+  Speaker = 'speaker',
+  Sidebar = 'sidebar',
+  Presentation = 'presentation',
+}
+
+export const viewLayoutCycle: readonly ViewLayoutMode[] = [
+  ViewLayoutMode.Grid,
+  ViewLayoutMode.Speaker,
+  // ViewLayoutMode.Sidebar,
+  // ViewLayoutMode.Presentation,
+]
