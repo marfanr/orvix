@@ -122,7 +122,7 @@ onUnmounted(() => {
         <button
           type="button"
           class="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white transition hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-          @click="save()"
+          @click="save(); close()"
         >
           Save changes
         </button>
