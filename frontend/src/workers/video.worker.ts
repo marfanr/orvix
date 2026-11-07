@@ -146,7 +146,7 @@ function warmUp(instance: ImageSegmenter): void {
 async function initSegmenter(): Promise<void> {
   // loaded parallel
   const [vision, modelBuf] = await Promise.all([resolveVision(), fetchModel()])
-  console.log(`[video.worker] assets ready +${since()}ms`)
+  // console.log(`[video.worker] assets ready +${since()}ms`)
 
   let instance: ImageSegmenter | null = null
   let lastError: unknown = null
@@ -159,7 +159,7 @@ async function initSegmenter(): Promise<void> {
         outputCategoryMask: true,
         outputConfidenceMasks: false,
       })
-      console.log(`[video.worker] segmenter delegate: ${delegate} +${since()}ms`)
+      // console.log(`[video.worker] segmenter delegate: ${delegate} +${since()}ms`)
       useFallbackBlur = false
       break
     } catch (e) {
@@ -182,12 +182,12 @@ async function initSegmenter(): Promise<void> {
 
   warmUp(instance)
   segmenter = instance
-  console.log(`[video.worker] warm-up done +${since()}ms`)
+  // console.log(`[video.worker] warm-up done +${since()}ms`)
 }
 
 async function initFilters(): Promise<void> {
   await initOpenCV()
-  console.log(`[video.worker] opencv ready +${since()}ms`)
+  // console.log(`[video.worker] opencv ready +${since()}ms`)
   if (disposed) disposeOpenCV()
 }
 
@@ -293,10 +293,16 @@ function fallbackComposite(frame: VideoFrame, w: number, h: number): void {
   ctx.globalCompositeOperation = 'source-over'
   ctx.clearRect(0, 0, w, h)
 
-  if (background.type === 'blur' && useFallbackBlur) {
-    drawBlurred(ctx, blurCtx, blurCanvas, frame, w, h, background.radius)
-  } else {
-    ctx.drawImage(frame, 0, 0, w, h)
+  switch (background.type) {
+    case 'blur':
+      drawBlurred(ctx, blurCtx, blurCanvas, frame, w, h, background.radius)
+      break
+    case 'color':
+      ctx.fillStyle = background.value
+      ctx.fillRect(0, 0, w, h)
+      break
+    default:
+      ctx.drawImage(frame, 0, 0, w, h)
   }
 }
 
@@ -356,18 +362,12 @@ function makeTransform(): TransformStream<VideoFrame, VideoFrame> {
           return
         }
 
-        if (enabled && !initDone) return
-
         const out = render(frame)
         if (!out) return
         controller.enqueue(out)
 
-        if (!enabled) {
-          markMaskReady()
-          markPublished()
-        } else if (maskReady || useFallbackBlur) {
-          markPublished()
-        }
+        if (!enabled) markMaskReady()
+        markPublished()
       } catch (e) {
         logThrottled('render failed', e)
         if (initDone || !enabled) {
