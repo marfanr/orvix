@@ -61,6 +61,7 @@ export interface MeetingConfigForm {
   bitrateGraph: boolean
   bgremoval: BgRemovalKey
   blurRadius: number
+  mirrorCamera: boolean
 }
 
 export const MEETING_CONFIG_DEFAULTS: MeetingConfigForm = {
@@ -98,6 +99,7 @@ export const MEETING_CONFIG_DEFAULTS: MeetingConfigForm = {
   bitrateGraph: true,
   bgremoval: 'disabled',
   blurRadius: 15,
+  mirrorCamera: true
 }
 
 export const useMeetingConfigStore = defineStore('meetingConfig', () => {

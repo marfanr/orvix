@@ -40,7 +40,7 @@ const props = defineProps<{
 const showCanvas = computed(
   () =>
     props.participant.id === LOCAL_PARTICIPANT_ID &&
-    form.value.bgremoval != 'disabled' &&
+    (form.value.bgremoval != 'disabled' || form.value.mirrorCamera) &&
     !props.participant.cameraOff,
 )
 

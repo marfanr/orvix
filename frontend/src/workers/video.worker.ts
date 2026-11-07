@@ -17,10 +17,12 @@ type InMsg =
   | {
       func: 'start_worker'
       background: Background
+      enabled: boolean
       writable: WritableStream<VideoFrame>
+      mirrored: boolean
     }
   | { func: 'set_source'; readable: ReadableStream<VideoFrame> }
-  | { func: 'set_background'; background: Background }
+  | { func: 'set_background'; background: Background; enabled: boolean; mirrored: boolean }
   | { func: 'stop_worker' }
 
 type OutMsg = { func: 'published' } | { func: 'mask_ready' }
@@ -47,6 +49,8 @@ const outCtx = outCanvas.getContext('2d')!
 let writable: WritableStream<VideoFrame> | null = null
 let pipeAbort: AbortController | null = null
 let background: Background = { type: 'blur', radius: 10 }
+let enabled = true
+let mirrored = false
 
 let segmenter: ImageSegmenter | null = null
 let useFallbackBlur = false
@@ -78,6 +82,8 @@ self.onmessage = (e: MessageEvent<InMsg>) => {
     case 'start_worker':
       writable = msg.writable
       background = msg.background
+      enabled = msg.enabled
+      mirrored = msg.mirrored
       startWorker()
       break
     case 'set_source':
@@ -85,6 +91,8 @@ self.onmessage = (e: MessageEvent<InMsg>) => {
       break
     case 'set_background':
       background = msg.background
+      enabled = msg.enabled
+      mirrored = msg.mirrored
       break
     case 'stop_worker':
       stopWorker()
@@ -100,7 +108,9 @@ async function ensureModuleFactory(loaderUrl: string): Promise<void> {
   if (!res.ok) throw new Error(`failed to fetch wasm loader: ${res.status} ${loaderUrl}`)
   const code = await res.text()
 
-  ;(0, eval)(`${code}\n;self.ModuleFactory = typeof ModuleFactory !== 'undefined' ? ModuleFactory : self.ModuleFactory;`)
+  ;(0, eval)(
+    `${code}\n;self.ModuleFactory = typeof ModuleFactory !== 'undefined' ? ModuleFactory : self.ModuleFactory;`,
+  )
 
   if (typeof g.ModuleFactory !== 'function') {
     throw new Error('wasm loader evaluated but ModuleFactory is still not set')
@@ -223,7 +233,10 @@ function drawBackground(frame: VideoFrame, w: number, h: number): void {
       drawBlurred(outCtx, blurCtx, blurCanvas, frame, w, h, bg.radius)
       break
     case 'image':
-      drawCover(outCtx, bg.image as ImageBitmap, w, h) // image harus dikirim sebagai ImageBitmap
+      outCtx.save()
+      outCtx.setTransform(1, 0, 0, 1, 0, 0)
+      drawCover(outCtx, bg.image as ImageBitmap, w, h)
+      outCtx.restore()
       break
     case 'color':
       outCtx.fillStyle = bg.value
@@ -239,6 +252,19 @@ function prepareCanvas(w: number, h: number): void {
   }
   outCtx.imageSmoothingEnabled = true
   outCtx.imageSmoothingQuality = 'high'
+}
+
+function markMaskReady(): void {
+  if (maskReadySent) return
+  maskReadySent = true
+  post({ func: 'mask_ready' })
+}
+
+function markPublished(): void {
+  if (published) return
+  published = true
+  console.log(`[video.worker] published +${since()}ms`)
+  post({ func: 'published' })
 }
 
 function composite(frame: VideoFrame, w: number, h: number): void {
@@ -257,10 +283,7 @@ function composite(frame: VideoFrame, w: number, h: number): void {
 
   ctx.globalCompositeOperation = 'source-over'
 
-  if (!maskReadySent) {
-    maskReadySent = true
-    post({ func: 'mask_ready' })
-  }
+  markMaskReady()
 }
 
 function fallbackComposite(frame: VideoFrame, w: number, h: number): void {
@@ -277,23 +300,42 @@ function fallbackComposite(frame: VideoFrame, w: number, h: number): void {
   }
 }
 
+function mirrorOnly(frame: VideoFrame, w: number, h: number): void {
+  prepareCanvas(w, h)
+  outCtx.globalCompositeOperation = 'source-over'
+  outCtx.setTransform(-1, 0, 0, 1, w, 0)
+  outCtx.drawImage(frame, 0, 0, w, h)
+  outCtx.setTransform(1, 0, 0, 1, 0, 0)
+}
+
 function render(frame: VideoFrame): VideoFrame | null {
   const w = frame.displayWidth
   const h = frame.displayHeight
   if (!w || !h) return null
 
-  const now = performance.now()
-  if (segmenter && now - lastRun >= SEGMENT_INTERVAL) {
-    lastRun = now
+  prepareCanvas(w, h)
+
+  if (!enabled) {
+    mirrorOnly(frame, w, h)
+  } else {
+    const now = performance.now()
+    if (segmenter && now - lastRun >= SEGMENT_INTERVAL) {
+      lastRun = now
+      try {
+        segment(frame)
+      } catch (e) {
+        logThrottled('segment failed', e)
+      }
+    }
+
+    if (mirrored) outCtx.setTransform(-1, 0, 0, 1, w, 0)
     try {
-      segment(frame)
-    } catch (e) {
-      logThrottled('segment failed', e)
+      if (maskReady && segmenter) composite(frame, w, h)
+      else fallbackComposite(frame, w, h)
+    } finally {
+      outCtx.setTransform(1, 0, 0, 1, 0, 0)
     }
   }
-
-  if (maskReady && segmenter) composite(frame, w, h)
-  else fallbackComposite(frame, w, h)
 
   return new VideoFrame(outCanvas, {
     timestamp: frame.timestamp,
@@ -305,26 +347,33 @@ function makeTransform(): TransformStream<VideoFrame, VideoFrame> {
   return new TransformStream<VideoFrame, VideoFrame>({
     transform(frame, controller) {
       try {
-        // if segmenter is not ready
-        if (disposed || !initDone) return
+        if (disposed) return
+
+        if (!enabled && !mirrored) {
+          controller.enqueue(frame.clone())
+          markMaskReady()
+          markPublished()
+          return
+        }
+
+        if (enabled && !initDone) return
 
         const out = render(frame)
         if (!out) return
         controller.enqueue(out)
 
-        if (!published && (maskReady || useFallbackBlur)) {
-          published = true
-          console.log(`[video.worker] published +${since()}ms`)
-          post({ func: 'published' })
+        if (!enabled) {
+          markMaskReady()
+          markPublished()
+        } else if (maskReady || useFallbackBlur) {
+          markPublished()
         }
       } catch (e) {
         logThrottled('render failed', e)
-        if (initDone) {
+        if (initDone || !enabled) {
           try {
             controller.enqueue(frame.clone())
-          } catch {
-            /* stream sudah ditutup */
-          }
+          } catch {}
         }
       } finally {
         frame.close()
