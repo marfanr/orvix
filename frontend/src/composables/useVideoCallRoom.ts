@@ -76,6 +76,7 @@ export function useVideoCallRoom(getRoomParam: () => string | string[] | undefin
 
   const handleControlChannel = (c: MessageEvent): void => {
     const data = JSON.parse(c.data)
+    console.log(data)
     switch (data.type) {
       case 'track_state': {
         const target = callStore.participants.find((p) => p.conn_id === data.from)
@@ -84,7 +85,6 @@ export function useVideoCallRoom(getRoomParam: () => string | string[] | undefin
         break
       }
       case 'track_ended': {
-        // mark if camera off
         const target = callStore.participants.find((p) => p.conn_id === data.from)
         if (target && data.kind === 'video') target.cameraOff = true
         break

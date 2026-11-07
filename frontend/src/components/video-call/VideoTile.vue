@@ -34,7 +34,10 @@ const props = defineProps<{
 }>()
 
 const showCanvas = computed(
-  () => props.participant.id === LOCAL_PARTICIPANT_ID && form.value.bgremoval != 'disabled',
+  () =>
+    props.participant.id === LOCAL_PARTICIPANT_ID &&
+    form.value.bgremoval != 'disabled' &&
+    !props.participant.cameraOff,
 )
 
 const MicStateIcon = computed(() => (props.participant.muted ? MicOffIcon : MicIcon))

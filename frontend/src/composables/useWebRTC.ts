@@ -94,7 +94,6 @@ export function useWebRTC(
     chatChannelSub.value ??= sub_pc.createDataChannel('chat', { id: 1, negotiated: true })
 
     controlChannel.value.onopen = () => {
-      debug('WebRTC connected')
       while (pendingMessageControlCh.length > 0 && controlChannel.value?.readyState === 'open') {
         const msg = pendingMessageControlCh[0]
 

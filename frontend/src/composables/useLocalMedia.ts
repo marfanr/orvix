@@ -5,8 +5,7 @@
 import { ref, type Ref } from 'vue'
 import type { Participant } from '@/types/video-call'
 
-// Kamera tidak perlu >30fps: encoder dibatasi 30fps dan pipeline blur/segmentasi
-// jalan per frame di main thread. 60-120fps hanya membakar CPU lalu frame terlambat/macet.
+
 const VIDEO_CONSTRAINTS: MediaTrackConstraints = {
   width: { ideal: 1280 },
   height: { ideal: 720 },
@@ -14,7 +13,6 @@ const VIDEO_CONSTRAINTS: MediaTrackConstraints = {
 }
 
 export function useLocalMedia(participants: Ref<Participant[]>) {
-  // Holder track lokal (mutable). Yang dipublikasikan ke UI selalu snapshot-nya.
   let localStream: MediaStream | null = null
 
   const cameraOn = ref(false)
@@ -24,13 +22,6 @@ export function useLocalMedia(participants: Ref<Participant[]>) {
 
   const getMe = () => participants.value.find((p) => p.id == 0)
 
-  // Publikasikan snapshot BARU setiap track berubah. Identitas stream yang berubah itulah
-  // yang memicu watcher di VideoTile (rebuild output canvas + audio). Memutasi stream yang
-  // sama tidak memicu apa pun karena MediaStream bukan reaktif.
-  //
-  // JANGAN menulis ke localRawStream di sini: itu stream OUTPUT canvas milik VideoTile.
-  // Menimpanya dengan stream mentah membuat video yang dikirim ke peer berpindah
-  // canvas -> kamera mentah dan tidak pernah kembali.
   const publish = () => {
     const me = getMe()
     if (!me) return
