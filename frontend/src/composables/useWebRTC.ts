@@ -147,10 +147,18 @@ export function useWebRTC(
     })
 
     pub_pc.addEventListener('iceconnectionstatechange', () => {
-      console.log('ICE pub:', pub_pc.iceConnectionState)
+      const state = pub_pc.iceConnectionState
+      console.log('ICE pub:', state)
+      if (state === 'failed' || state === 'disconnected') {
+        pub_pc.restartIce()
+      }
     })
     sub_pc.addEventListener('iceconnectionstatechange', () => {
-      console.log('ICE sub:', sub_pc.iceConnectionState)
+      const state = sub_pc.iceConnectionState
+      console.log('ICE sub:', state)
+      if (state === 'failed' || state === 'disconnected') {
+        sub_pc.restartIce()
+      }
     })
 
     const caps = RTCRtpReceiver.getCapabilities('video')

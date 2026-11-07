@@ -63,3 +63,8 @@ export enum SupportedBitrate {
   B4 = '4',
   B8 = '8',
 }
+
+export type Background =
+  | { type: 'color'; value: string }
+  | { type: 'image'; image: HTMLImageElement | ImageBitmap }
+  | { type: 'blur'; radius: number }

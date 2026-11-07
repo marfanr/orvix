@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Mohammad Arfan
+//
+// SPDX-License-Identifier: AGPL-3.0
+
 <script setup lang="ts">
 import {
   type ComponentPublicInstance,
@@ -46,6 +50,7 @@ const videoRef = ref<HTMLVideoElement | null>(null)
 const audioRef = ref<HTMLAudioElement | null>(null)
 
 const sourceStream = ref<MediaStream | null>(null)
+const previewStream = ref<MediaStream | null>(null)
 let canvasStream: MediaStream | null = null
 let outStream: MediaStream | null = null
 
@@ -77,7 +82,7 @@ function attachStream(el: HTMLMediaElement, stream: MediaStream): void {
 
 async function setVideoStream(): Promise<void> {
   await nextTick()
-  const stream = sourceStream.value
+  const stream = (showCanvas.value && previewStream.value) || sourceStream.value
   if (videoRef.value && stream) attachStream(videoRef.value, stream)
 }
 
@@ -103,18 +108,15 @@ function buildOutStream(): void {
 function onCanvasStream(stream: MediaStream): void {
   if (!stream.getVideoTracks().length) return
   canvasStream = stream
+  previewStream.value = new MediaStream(stream.getVideoTracks())
   buildOutStream()
 }
 
-// Kembalikan ke stream mentah HANYA kalau output milik tile ini masih yang aktif.
-// Kalau tile lain (mis. hasil remount) sudah mengganti localRawStream, jangan ditimpa.
-// Di-null-kan (bukan diisi stream mentah): stream mentah adalah snapshot yang bisa basi
-// setelah toggle mic/kamera, sedangkan null membuat outgoingStream() selalu memakai
-// stream participant terbaru.
 function restoreRawStream(): void {
   const mine = outStream
   outStream = null
   canvasStream = null
+  previewStream.value = null
 
   if (mine && localRawStream.value === mine) {
     localRawStream.value = null
@@ -123,7 +125,10 @@ function restoreRawStream(): void {
 
 watch(showCanvas, (enabled) => {
   if (!enabled) restoreRawStream()
+  setVideoStream()
 })
+
+watch(previewStream, () => setVideoStream())
 
 watch(sourceStream, (raw) => {
   setVideoStream()
@@ -133,14 +138,11 @@ watch(sourceStream, (raw) => {
   if (currentAudio !== nextAudio) buildOutStream()
 })
 
-// Saat unmount (mis. layout grid/speaker berubah -> tile di-remount), jangan langsung
-// replaceTrack ke kamera mentah: peer akan melihat kedip (background asli muncul sebentar)
-// lalu canvas baru menggantinya lagi. Tunda; kalau instance baru sudah mengambil alih
-// localRawStream, restore dibatalkan oleh pengecekan identitas.
 onBeforeUnmount(() => {
   const mine = outStream
   outStream = null
   canvasStream = null
+  previewStream.value = null
   if (!mine) return
 
   setTimeout(() => {
@@ -172,12 +174,10 @@ watch([() => props.participant.muted, () => props.participant.stream], setAudioS
       </span>
     </div>
 
-
     <div v-show="!participant.cameraOff" class="absolute inset-0">
-      <VideoMaskCanvas v-if="showCanvas" :participant="participant" :video="videoRef" :model-value="model"
-        @stream="onCanvasStream" />
-      <video :ref="setVideoRef" class="w-full h-full bg-black object-cover"
-        :class="{ 'opacity-0 pointer-events-none': showCanvas && !videoRef }" autoplay playsinline muted></video>
+      <VideoMaskCanvas v-if="showCanvas" :participant="participant" :stream="sourceStream"
+        :model-value="model" @stream="onCanvasStream" />
+      <video :ref="setVideoRef" class="w-full h-full bg-black object-cover" autoplay playsinline muted></video>
     </div>
 
     <audio v-if="!showCanvas" :ref="setAudioRef" autoplay playsinline />
