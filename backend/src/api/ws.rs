@@ -172,6 +172,8 @@ impl WsMsg {
         //        |  answer  ------------------------------->   |  browser only answers
         //        |  <------ RTP of other peers (Output)        |  <- attach()
         //        |  <------ control channel (track_state)      |
+
+        // TODO: migration to RTC sans-io
         let pub_peer = create_peer(
             conn_id,
             room_arc.clone(),

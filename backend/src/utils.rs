@@ -3,8 +3,12 @@ use std::{env, sync::OnceLock};
 use argon2::{Algorithm, Argon2, Params, Version};
 use chrono::{Duration, Utc};
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
+use rtc::stun::attributes::ATTR_USERNAME;
+use rtc::stun::message::{Message, is_stun_message};
+use rtc::stun::textattrs::TextAttribute;
 use serde::de::DeserializeOwned;
 use sonic_rs::{Deserialize, Serialize};
+use tracing::info;
 use uuid::Uuid;
 use validator::ValidationError;
 
@@ -192,4 +196,41 @@ pub fn describe_nal(payload: &[u8]) -> Option<String> {
         }
         t => Some(format!("other type={t}")),
     }
+}
+
+// stun
+pub fn stun_local_ufrag(data: &[u8]) -> Option<String> {
+    if !is_stun_message(data) {
+        return None;
+    }
+    let mut msg = Message::new();
+    msg.unmarshal_binary(data).ok()?;
+    let username = TextAttribute::get_from_as(&msg, ATTR_USERNAME).ok()?;
+    username.text.split(':').next().map(str::to_owned)
+}
+
+pub fn ice_ufrag(sdp: &str) -> Option<&str> {
+    sdp.lines()
+        .find_map(|l| l.trim().strip_prefix("a=ice-ufrag:"))
+}
+
+pub async fn resolve_announce_ip() -> std::net::IpAddr {
+    if let Ok(s) = env::var("ANNOUNCE_IP") {
+        match s.parse() {
+            Ok(ip) => return ip,
+            Err(_) => tracing::warn!("invalid ANNOUNCE_IP={s}, falling back to auto-detect"),
+        }
+    }
+
+    if let Ok(socket) = tokio::net::UdpSocket::bind("0.0.0.0:0").await {
+        if socket.connect("8.8.8.8:80").await.is_ok() {
+            if let Ok(addr) = socket.local_addr() {
+                info!("announce ip auto-detected: {}", addr.ip());
+                return addr.ip();
+            }
+        }
+    }
+
+    tracing::warn!("could not detect announce ip, using 127.0.0.1");
+    std::net::IpAddr::from([127, 0, 0, 1])
 }

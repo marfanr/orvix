@@ -1,29 +1,30 @@
-use std::
-env;
-use tracing::info;
+use std::env;
 
-use crate::ai::onnx::test_onnx;
 use crate::api::metrics::init_metrics;
+use crate::peer::create_peer;
+use crate::peer::worker::WorkerMessage;
+use crate::utils::resolve_announce_ip;
 use crate::{
-    api::server::{ServerState, run_server}, models::
-    conn::{self, prewarm}, utils::init_keys,
+    api::server::{ServerState, run_server},
+    models::conn::{self, prewarm},
+    utils::init_keys,
 };
-use crate::models::conn::warm_statements;
 
 fn init_rustls() {
     let provider = rustls::crypto::ring::default_provider();
     let _ = provider.install_default();
 }
 
+pub mod ai;
 pub mod api;
 pub mod db;
+mod ffmpeg;
 pub mod logger;
 pub mod models;
+pub mod peer;
 pub mod sfu;
 pub mod telemetry;
 pub mod utils;
-pub mod ai;
-mod ffmpeg;
 
 #[derive(Default)]
 struct ArgsParsed {
@@ -55,20 +56,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     init_keys();
     let pool = conn::init_db()?;
     prewarm(&pool, 4).await;
-    
-    let state = ServerState::new(pool, vec![
-        "http://localhost:5173".to_string(),
-        "http://127.0.0.1:5173".to_string()
-    ]);
 
-    let args = handle_args();
-    if args.is_running_migration {
-        // TODO: create migration
-        todo!("run migrations");
-        return Ok(());
-    }
+    let state = ServerState::new(
+        pool,
+        vec![
+            "http://localhost:5173".to_string(),
+            "http://127.0.0.1:5173".to_string(),
+        ],
+        resolve_announce_ip().await,
+    );
+
+    // let args = handle_args();
+    // if args.is_running_migration {
+    //     // TODO: create migration
+    //     todo!("run migrations");
+    //     return Ok(());
+    // }
 
     init_metrics();
+
     run_server(state, 8080).await?;
 
     telemetry::shutdown_telemetry();

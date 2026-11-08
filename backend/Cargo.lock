@@ -375,6 +375,7 @@ dependencies = [
  "async-trait",
  "axum 0.8.9",
  "axum-extra",
+ "bytes",
  "chrono",
  "cookie",
  "dashmap",
