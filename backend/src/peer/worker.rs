@@ -43,7 +43,7 @@ pub fn worker_pool() -> &'static [mpsc::UnboundedSender<WorkerMessage>] {
                             init_mux(port).await;
 
                             while let Some(job) = rx.recv().await {
-                                handle_msg(&job).await;
+                                handle_msg(job).await;
                             }
                         })
                     })

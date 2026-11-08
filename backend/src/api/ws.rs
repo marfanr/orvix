@@ -5,6 +5,7 @@
 use crate::api::WsError;
 use crate::api::server::ServerState;
 use crate::models;
+use crate::peer::cmd::PeerCommand;
 use crate::sfu::PeerType;
 use crate::sfu::peer::create_peer;
 use crate::sfu::room::RoomSfu;
@@ -174,6 +175,8 @@ impl WsMsg {
         //        |  <------ control channel (track_state)      |
 
         // TODO: migration to RTC sans-io
+        let new_peer = crate::peer::create_peer(conn_id, state.announce_ip);
+
         let pub_peer = create_peer(
             conn_id,
             room_arc.clone(),

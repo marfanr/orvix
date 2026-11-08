@@ -2,13 +2,14 @@ use crate::peer::{
     constant::{CONTROL_LABEL, MESSAGE_LABEL},
     driver::PeerDriver,
     mux,
-    worker::{PeerWorker, WorkerMessage},
+    worker::WorkerMessage,
 };
 use rtc::{
     data_channel::RTCDataChannelInit,
     ice::{candidate::CandidateConfig, mdns::MulticastDnsMode, network_type::NetworkType},
+    media_stream::MediaStreamTrack,
     peer_connection::{
-        RTCPeerConnectionBuilder,
+        RTCPeerConnection, RTCPeerConnectionBuilder,
         configuration::{
             RTCConfigurationBuilder, RTCIceServer, RTCRtcpMuxPolicy,
             interceptor_registry::{Registry, register_default_interceptors},
@@ -18,21 +19,59 @@ use rtc::{
         transport::{
             CandidateHostConfig, CandidateServerReflexiveConfig, RTCDtlsRole, RTCIceCandidateInit,
         },
+        sdp::{RTCSessionDescription}
     },
+    rtp_transceiver::RTCRtpSenderId,
 };
-use uuid::Uuid;
 use std::{
-    net::{IpAddr, SocketAddr}, rc::Rc, time::Instant,
+    net::{IpAddr, SocketAddr},
+    rc::Rc,
+    time::Instant,
 };
-use tokio::{net::unix::pipe::Receiver, sync::mpsc};
+use tokio::sync::{mpsc, oneshot};
+use uuid::Uuid;
 
-pub enum PeerCommand {}
+pub enum PeerType {
+    PUBLISHER,
+    SUBSCRIBER,
+}
+
+pub enum PeerCommand {
+    AnswerOffer {
+        sdp: String,
+        resp: oneshot::Sender<Result<String, String>>,
+        pc_type: PeerType,
+    },
+    /// remote answer to one of our offers
+    ApplyAnswer {
+        sdp: String,
+        resp: oneshot::Sender<Result<(), String>>,
+    },
+    AddRemoteCandidate {
+        init: RTCIceCandidateInit,
+        resp: oneshot::Sender<Result<(), String>>,
+    },
+    /// register one outbound track; returns the wire-facing sender id and the
+    /// packet queue that only this driver drains
+    Attach {
+        track: MediaStreamTrack,
+        mime: String,
+        // resp: oneshot::Sender<Result<AttachedOutput, String>>,
+    },
+    Detach {
+        sender_id: RTCRtpSenderId,
+        resp: oneshot::Sender<Result<(), String>>,
+    },
+    SendControl(String),
+    SendChat(String),
+    Close,
+}
 
 pub struct PeerCommandInstance {
     pub tx: mpsc::Sender<PeerCommand>,
 }
 
-pub(super) async fn handle_msg(job: &WorkerMessage) {
+pub(super) async fn handle_msg(job: WorkerMessage) {
     match job {
         WorkerMessage::CreatePeer {
             announce_ip,
@@ -46,15 +85,58 @@ pub(super) async fn handle_msg(job: &WorkerMessage) {
                     return;
                 }
             };
+            peer.run().await;
         }
         _ => {}
     }
 }
 
-async fn build_peer(conn_id: &Uuid, announce_ip: IpAddr, rx: &mpsc::Receiver<PeerCommand>) -> Result<PeerDriver, String> {
+async fn build_peer(
+    conn_id: Uuid,
+    announce_ip: IpAddr,
+    rx: mpsc::Receiver<PeerCommand>,
+) -> Result<PeerDriver, String> {
     let mux = mux::current();
     let local_addr = SocketAddr::new(announce_ip, mux.port);
 
+    let mut publisher_pc = create_pc(local_addr).await?;
+    let mut subscriber_pc = create_pc(local_addr).await?;
+
+    let ctrl = publisher_pc
+        .create_data_channel(
+            CONTROL_LABEL,
+            Some(RTCDataChannelInit {
+                negotiated: Some(0),
+                ..Default::default()
+            }),
+        )
+        .map_err(|e| format!("create control channel: {e}"))?;
+    let ctrl_id = ctrl.id();
+
+    let msg = publisher_pc
+        .create_data_channel(
+            MESSAGE_LABEL,
+            Some(RTCDataChannelInit {
+                negotiated: Some(1),
+                ..Default::default()
+            }),
+        )
+        .map_err(|e| format!("create message channel: {e}"))?;
+    let msg_id = msg.id();
+
+    let net_rx = mux.register(conn_id);
+
+    Ok(PeerDriver {
+        conn_id: conn_id,
+        mux: Rc::clone(&mux),
+        net_rx,
+        cmd_rx: rx,
+        publisher_pc,
+        subscriber_pc,
+    })
+}
+
+async fn create_pc(local_addr: SocketAddr) -> Result<RTCPeerConnection, String> {
     let config = RTCConfigurationBuilder::default()
         .with_ice_servers(vec![RTCIceServer {
             urls: vec!["stun:stun.l.google.com:19302".to_owned()],
@@ -137,35 +219,25 @@ async fn build_peer(conn_id: &Uuid, announce_ip: IpAddr, rx: &mpsc::Receiver<Pee
     pc.add_local_candidate(RTCIceCandidateInit::default())
         .map_err(|e| format!("gather complete: {e}"))?;
 
-    // out-of-band negotiated channels, matching the client side ids 0 and 1
-    let ctrl = pc
-        .create_data_channel(
-            CONTROL_LABEL,
-            Some(RTCDataChannelInit {
-                negotiated: Some(0),
-                ..Default::default()
-            }),
-        )
-        .map_err(|e| format!("create control channel: {e}"))?;
-    let ctrl_id = ctrl.id();
+    return Ok(pc);
+}
 
-    let msg = pc
-        .create_data_channel(
-            MESSAGE_LABEL,
-            Some(RTCDataChannelInit {
-                negotiated: Some(1),
-                ..Default::default()
-            }),
-        )
-        .map_err(|e| format!("create message channel: {e}"))?;
-    let msg_id = msg.id();
+impl PeerDriver {
+    pub async fn parse_cmd(&self, cmd: PeerCommand) -> bool {
+        let now = Instant::now();
+        match cmd {
+            PeerCommand::AnswerOffer { sdp, resp, pc_type } => {
+                let pc = match pc_type {
+                    PeerType::PUBLISHER => &self.subscriber_pc,
+                    PeerType::SUBSCRIBER => &self.publisher_pc,
+                };
+                let offer =
+                    RTCSessionDescription::offer(sdp).map_err(|e| format!("parse offer: {e}"))?;
+                pc.set_remote_description(now, offer);
 
-
-    let conn_id = conn_id.clone();
-    let net_rx = mux.register(conn_id);
-
-    Ok((PeerDriver {
-        conn_id: conn_id,
-        mux: Rc::clone(&mux)
-    }))
+            }
+            _ => {}
+        }
+        return true;
+    }
 }
