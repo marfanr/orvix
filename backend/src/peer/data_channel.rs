@@ -1,0 +1,88 @@
+use crate::peer::constant::PLI_WINDOW;
+use crate::peer::driver::PeerDriver;
+use rtc::data_channel::RTCDataChannelMessage;
+use rtc::peer_connection::message::RTCMessage;
+use sonic_rs::{Deserialize, Serialize};
+use std::time::Instant;
+use tracing::{debug, error, info};
+use uuid::Uuid;
+
+#[derive(Deserialize, Debug)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ControlMessage {
+    Record,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct DataMessage {
+    pub target: String,
+    pub message: String,
+}
+
+#[derive(Serialize, Debug)]
+pub struct DataMessageResponse {
+    pub target: String,
+    pub message: String,
+    pub from: String,
+}
+
+async fn handle_control_message(conn_id: Uuid, msg: RTCDataChannelMessage) {
+    let json = sonic_rs::from_slice::<ControlMessage>(&msg.data);
+    match json {
+        Ok(ControlMessage::Record) => {
+            info!("conn {conn_id}: received record control command via data channel");
+        }
+        Err(e) => {
+            debug!("conn {conn_id}: control parse err: {e}");
+        }
+    }
+}
+
+async fn handle_chat_message(conn_id: Uuid, msg: RTCDataChannelMessage) {
+    let json = match sonic_rs::from_slice::<DataMessage>(&msg.data) {
+        Ok(json) => json,
+        Err(e) => {
+            error!("conn {conn_id}: message data channel err: {e}");
+            return;
+        }
+    };
+
+    debug!("conn {conn_id}: chat message to {}: {}", json.target, json.message);
+}
+
+impl PeerDriver {
+    pub(super) async fn handle_inbound_message(&mut self, now: Instant, message: RTCMessage) {
+        match message {
+            RTCMessage::RtpPacket(track_id, pkt) => {
+                let Some(t) = self.inbound.get_mut(&track_id) else {
+                    return;
+                };
+                t.last_rtp = now;
+                let _rid = t
+                    .layers
+                    .get(&pkt.header.ssrc)
+                    .cloned()
+                    .unwrap_or_else(|| "default".to_string());
+
+                if t.paused {
+                    t.paused = false;
+                    t.pli_until = now + PLI_WINDOW;
+                    info!("conn {}: track resumed", self.conn_id);
+                }
+            }
+            RTCMessage::RtcpPacket(_, _) => {
+                // NACK/reports are handled by interceptors
+            }
+            RTCMessage::DataChannelMessage(channel_id, msg) => {
+                if channel_id == self.ctrl_id {
+                    handle_control_message(self.conn_id, msg).await;
+                } else if channel_id == self.msg_id {
+                    handle_chat_message(self.conn_id, msg).await;
+                } else {
+                    debug!("conn {}: data channel {channel_id} unknown, message dropped", self.conn_id);
+                }
+            }
+            _ => {}
+        }
+    }
+}
