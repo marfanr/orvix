@@ -240,9 +240,9 @@ async fn build_peer(
     let local_addr = SocketAddr::new(announce_ip, mux.port);
 
     let mut publisher_pc = create_pc(local_addr).await?;
-    let subscriber_pc = create_pc(local_addr).await?;
+    let mut subscriber_pc = create_pc(local_addr).await?;
 
-    let ctrl = publisher_pc
+    let sub_ctrl_id = subscriber_pc
         .create_data_channel(
             CONTROL_LABEL,
             Some(RTCDataChannelInit {
@@ -250,10 +250,21 @@ async fn build_peer(
                 ..Default::default()
             }),
         )
-        .map_err(|e| format!("create control channel: {e}"))?;
-    let ctrl_id = ctrl.id();
+        .map_err(|e| format!("create control channel: {e}"))?
+        .id();
 
-    let msg = publisher_pc
+    let pub_ctrl_id = publisher_pc
+        .create_data_channel(
+            CONTROL_LABEL,
+            Some(RTCDataChannelInit {
+                negotiated: Some(0),
+                ..Default::default()
+            }),
+        )
+        .map_err(|e| format!("create control channel: {e}"))?
+        .id();
+
+    let sub_msg_id = subscriber_pc
         .create_data_channel(
             MESSAGE_LABEL,
             Some(RTCDataChannelInit {
@@ -261,8 +272,19 @@ async fn build_peer(
                 ..Default::default()
             }),
         )
-        .map_err(|e| format!("create message channel: {e}"))?;
-    let msg_id = msg.id();
+        .map_err(|e| format!("create message channel: {e}"))?
+        .id();
+
+    let pub_msg_id = publisher_pc
+        .create_data_channel(
+            MESSAGE_LABEL,
+            Some(RTCDataChannelInit {
+                negotiated: Some(1),
+                ..Default::default()
+            }),
+        )
+        .map_err(|e| format!("create message channel: {e}"))?
+        .id();
 
     let net_rx = mux.register(conn_id);
 
@@ -274,8 +296,10 @@ async fn build_peer(
         cmd_rx: rx,
         publisher_pc,
         subscriber_pc,
-        ctrl_id,
-        msg_id,
+        pub_ctrl_id,
+        sub_ctrl_id,
+        pub_msg_id,
+        sub_msg_id,
         inbound: HashMap::new(),
         outbound: HashMap::new(),
         media_rx: SelectAll::new(),
@@ -334,31 +358,31 @@ async fn create_pc(local_addr: SocketAddr) -> Result<RTCPeerConnection, String> 
     pc.add_local_candidate(local_candidate)
         .map_err(|e| format!("add candidate: {e}"))?;
 
-    // if let Some(srflx) = mux::current().srflx_addr {
-    //     let mux = mux::current();
+    if let Some(srflx) = mux::current().srflx_addr {
+        let mux = mux::current();
 
-    //     let candidate = CandidateServerReflexiveConfig {
-    //         base_config: CandidateConfig {
-    //             network: "udp".to_owned(),
-    //             address: srflx.ip().to_string(),
-    //             port: srflx.port(),
-    //             component: 1,
-    //             ..Default::default()
-    //         },
-    //         rel_addr: local_addr.ip().to_string(),
-    //         rel_port: mux.port,
-    //         ..Default::default()
-    //     }
-    //     .new_candidate_server_reflexive()
-    //     .map_err(|e| format!("build srflx candidate: {e}"))?;
+        let candidate = CandidateServerReflexiveConfig {
+            base_config: CandidateConfig {
+                network: "udp".to_owned(),
+                address: srflx.ip().to_string(),
+                port: srflx.port(),
+                component: 1,
+                ..Default::default()
+            },
+            rel_addr: local_addr.ip().to_string(),
+            rel_port: mux.port,
+            ..Default::default()
+        }
+        .new_candidate_server_reflexive()
+        .map_err(|e| format!("build srflx candidate: {e}"))?;
 
-    //     let local_candidate = rtc::peer_connection::transport::RTCIceCandidate::from(&candidate)
-    //         .to_json()
-    //         .map_err(|e| format!("candidate json: {e}"))?;
+        let local_candidate = rtc::peer_connection::transport::RTCIceCandidate::from(&candidate)
+            .to_json()
+            .map_err(|e| format!("candidate json: {e}"))?;
 
-    //     pc.add_local_candidate(local_candidate)
-    //         .map_err(|e| format!("add srflx candidate: {e}"))?;
-    // }
+        pc.add_local_candidate(local_candidate)
+            .map_err(|e| format!("add srflx candidate: {e}"))?;
+    }
 
     pc.add_local_candidate(RTCIceCandidateInit::default())
         .map_err(|e| format!("gather complete: {e}"))?;
@@ -464,14 +488,14 @@ impl PeerDriver {
                 let _ = resp.send(result);
             }
             PeerCommand::SendControl(json) => {
-                if let Some(mut dc) = self.publisher_pc.data_channel(self.ctrl_id) {
+                if let Some(mut dc) = self.publisher_pc.data_channel(self.sub_ctrl_id) {
                     if let Err(e) = dc.send_text(now, json) {
                         debug!("conn {}: control send: {e}", self.conn_id);
                     }
                 }
             }
             PeerCommand::SendChat(json) => {
-                if let Some(mut dc) = self.publisher_pc.data_channel(self.msg_id) {
+                if let Some(mut dc) = self.publisher_pc.data_channel(self.pub_msg_id) {
                     if let Err(e) = dc.send_text(now, json) {
                         debug!("conn {}: chat send: {e}", self.conn_id);
                     }

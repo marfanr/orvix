@@ -1,4 +1,4 @@
-use std::{net::IpAddr, ops::Add, sync::OnceLock, thread::Builder, sync::Arc};
+use std::{net::IpAddr, ops::Add, sync::Arc, sync::OnceLock, thread::Builder};
 
 use axum::extract::ws;
 use tokio::sync::mpsc;
@@ -16,7 +16,7 @@ pub enum WorkerMessage {
         rx: mpsc::Receiver<PeerCommand>,
         conn_id: Uuid,
         room: Arc<RoomSfu>,
-        ws_sink: mpsc::Sender<ws::Message>
+        ws_sink: mpsc::Sender<ws::Message>,
     },
 }
 

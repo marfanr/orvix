@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 pub const CONTROL_LABEL: &str = "control";
-pub const MESSAGE_LABEL: &str = "message";
+pub const MESSAGE_LABEL: &str = "chat";
 
 /// the simulcast layer that gets forwarded to subscribers; layers whose rid
 /// differs are demoted here (audio tracks without rid are normalized to this)

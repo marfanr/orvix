@@ -1,8 +1,11 @@
+use crate::peer::cmd::PeerCommand::SendChat;
 use crate::peer::constant::{FORWARD_RID, PLI_WINDOW};
 use crate::peer::driver::PeerDriver;
+use chrono::Utc;
 use rtc::data_channel::RTCDataChannelMessage;
 use rtc::peer_connection::message::RTCMessage;
 use sonic_rs::{Deserialize, Serialize};
+use std::string;
 use std::sync::Arc;
 use std::time::Instant;
 use tracing::{debug, error, info};
@@ -17,14 +20,16 @@ pub enum ControlMessage {
 #[derive(Deserialize, Debug)]
 pub struct DataMessage {
     pub target: String,
-    pub message: String,
+    pub msg: String,
+    pub time: i64,
 }
 
 #[derive(Serialize, Debug)]
 pub struct DataMessageResponse {
     pub target: String,
-    pub message: String,
+    pub msg: String,
     pub from: String,
+    pub time: i64,
 }
 
 async fn handle_control_message(conn_id: Uuid, msg: RTCDataChannelMessage) {
@@ -37,18 +42,6 @@ async fn handle_control_message(conn_id: Uuid, msg: RTCDataChannelMessage) {
             debug!("conn {conn_id}: control parse err: {e}");
         }
     }
-}
-
-async fn handle_chat_message(conn_id: Uuid, msg: RTCDataChannelMessage) {
-    let json = match sonic_rs::from_slice::<DataMessage>(&msg.data) {
-        Ok(json) => json,
-        Err(e) => {
-            error!("conn {conn_id}: message data channel err: {e}");
-            return;
-        }
-    };
-
-    debug!("conn {conn_id}: chat message to {}: {}", json.target, json.message);
 }
 
 impl PeerDriver {
@@ -99,15 +92,44 @@ impl PeerDriver {
                 // NACK/reports are handled by interceptors
             }
             RTCMessage::DataChannelMessage(channel_id, msg) => {
-                if channel_id == self.ctrl_id {
+                if channel_id == self.sub_ctrl_id {
                     handle_control_message(self.conn_id, msg).await;
-                } else if channel_id == self.msg_id {
-                    handle_chat_message(self.conn_id, msg).await;
+                } else if channel_id == self.pub_msg_id {
+                    self.handle_chat_message(self.conn_id, msg).await;
                 } else {
-                    debug!("conn {}: data channel {channel_id} unknown, message dropped", self.conn_id);
+                    debug!(
+                        "conn {}: data channel {channel_id} unknown, message dropped",
+                        self.conn_id
+                    );
                 }
             }
             _ => {}
         }
+    }
+
+    async fn handle_chat_message(&mut self, conn_id: Uuid, msg: RTCDataChannelMessage) {
+        let json = match sonic_rs::from_slice::<DataMessage>(&msg.data) {
+            Ok(json) => json,
+            Err(e) => {
+                error!("conn {conn_id}: message data channel err: {e}");
+                return;
+            }
+        };
+
+        println!("msg : {}", str::from_utf8(&msg.data).unwrap());
+        let username = self
+            .room
+            .peers
+            .get(&conn_id)
+            .and_then(|p| Some(p.username.to_owned()))
+            .expect("username must be filled");
+
+        let resp = DataMessageResponse {
+            from: username.to_string(),
+            msg: json.msg,
+            target: json.target,
+            time: json.time,
+        };
+        self.room.broadcast_chat(conn_id, &resp).await;
     }
 }

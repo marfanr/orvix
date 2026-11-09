@@ -172,6 +172,7 @@ export function useWebRTC(
     })
     pub_pc.addEventListener('datachannel', (e) => {
       const channel = e.channel
+      console.log("new msg in datcan")
 
       channel.onmessage = (msg) => {
         handleControl?.(msg)
