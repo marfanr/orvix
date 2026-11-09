@@ -15,7 +15,6 @@ use crate::{
     models::{refresh_tokens as rt, user},
     utils::{FAMILY_TTL, REFRESH_TTL, RefreshClaims, get_argon, sign_pair, verify_jwt},
 };
-use crate::models::ModelError;
 
 #[derive(sonic_rs::Deserialize, Validate)]
 struct SignInRequest<'a> {
@@ -223,10 +222,7 @@ async fn refresh_token(
     ))
 }
 
-async fn logout(
-    State(state): State<ServerState>,
-    jar: CookieJar,
-) -> (StatusCode, CookieJar) {
+async fn logout(State(state): State<ServerState>, jar: CookieJar) -> (StatusCode, CookieJar) {
     if let Some(refresh) = jar.get("refresh_token") {
         if let Ok(claims) = verify_jwt::<RefreshClaims>(refresh.value()) {
             if let Ok(family_id) = claims.family_id.parse::<Uuid>() {

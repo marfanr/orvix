@@ -14,8 +14,8 @@ use axum::response::{IntoResponse, Response};
 use axum_extra::TypedHeader;
 use dashmap::{DashMap, Entry};
 use deadpool_postgres::Pool;
-use std::sync::Arc;
 use std::time::Duration;
+use std::{net::IpAddr, sync::Arc};
 use tokio::net::TcpListener;
 use tokio::sync::{Semaphore, mpsc};
 use tower_http::cors::CorsLayer;
@@ -53,11 +53,12 @@ pub struct ServerState {
     pub pool: Pool,
     pub hash_sem: Arc<Semaphore>,
     pub allowed_origins: Arc<Vec<String>>,
-    pub waiting_room: Arc<DashMap<Uuid, Vec<mpsc::Sender<Message>>>>
+    pub waiting_room: Arc<DashMap<Uuid, Vec<mpsc::Sender<Message>>>>,
+    pub announce_ip: IpAddr,
 }
 
 impl ServerState {
-    pub fn new(pool: Pool, allowed_origins: Vec<String>) -> Self {
+    pub fn new(pool: Pool, allowed_origins: Vec<String>, announce_ip: IpAddr) -> Self {
         Self {
             rooms: Arc::default(),
             ws_conn: Arc::default(),
@@ -66,19 +67,22 @@ impl ServerState {
             conn_to_rooms: Arc::default(),
             allowed_origins: Arc::new(allowed_origins),
             waiting_room: Arc::default(),
+            announce_ip,
         }
     }
 
     pub async fn broadcast_to_waiting_room(&self, room: Uuid, m: Message) {
-        let senders = self.waiting_room.get(&room)
+        let senders = self
+            .waiting_room
+            .get(&room)
             .map(|m| m.clone())
             .unwrap_or_default();
-        
+
         for s in senders {
             _ = s.send(m.clone()).await;
         }
     }
-    
+
     pub fn drop_from_waiting_room(&self, room: Uuid, sender: mpsc::Sender<Message>) {
         if let Entry::Occupied(mut e) = self.waiting_room.entry(room) {
             e.get_mut().retain(|tx| !tx.same_channel(&sender));
@@ -145,7 +149,7 @@ pub async fn optional_bearer_middleware(
                     StatusCode::UNAUTHORIZED,
                     "invalid bearer token".to_owned(),
                 )
-                    .into_response();
+                .into_response();
             }
         },
     };

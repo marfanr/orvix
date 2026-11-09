@@ -7,25 +7,24 @@ use arc_swap::{ArcSwap, ArcSwapOption};
 use dashmap::DashMap;
 use rtc::media_stream::MediaStreamTrack;
 use rtc::rtp::Packet;
+use rtc::rtp_transceiver::RTCRtpSenderId;
 use rtc::rtp_transceiver::rtp_sender::{
     RTCRtpCodec, RTCRtpCodingParameters, RTCRtpEncodingParameters, RtpCodecKind,
 };
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::mpsc;
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 use uuid::Uuid;
-use webrtc::media_stream::track_local::TrackLocal;
-use webrtc::media_stream::track_local::static_rtp::TrackLocalStaticRTP;
-use webrtc::media_stream::track_remote::TrackRemote;
-use webrtc::rtp_transceiver::RtpSender;
 
+/// One subscriber leg of a published track. `sender_id` refers to the `RTCRtpSender`
+/// inside the *subscriber's* peer driver, `tx` is that driver's packet queue
+/// (`AttachedOutput.tx` from `PeerCommandInstance::attach`).
 #[derive(Clone)]
 pub struct Output {
     pub sub: Uuid,
-    pub ssrc: u32,
-    pub track: Arc<dyn TrackLocal>,
-    pub sender: Arc<dyn RtpSender>,
+    pub sender_id: RTCRtpSenderId,
+    pub tx: mpsc::Sender<Packet>,
 }
 
 pub struct RecordingHandle {
@@ -41,7 +40,6 @@ pub struct PublishedTrack {
     recorder: ArcSwapOption<RecordingHandle>,
     has_keyframe: AtomicBool,
     pub simulcast_layers: DashMap<String, u32>,
-    remote_track: ArcSwapOption<Arc<dyn TrackRemote>>,
 }
 
 impl PublishedTrack {
@@ -57,7 +55,6 @@ impl PublishedTrack {
             recorder: ArcSwapOption::empty(),
             has_keyframe: AtomicBool::new(false),
             simulcast_layers: DashMap::new(),
-            remote_track: ArcSwapOption::empty(),
         }
     }
 
@@ -100,9 +97,12 @@ impl PublishedTrack {
         }
     }
 
-    pub fn create_track_local(&self) -> (u32, Arc<dyn TrackLocal>) {
+    /// Fresh outbound `MediaStreamTrack` for `PeerCommandInstance::attach`. The
+    /// peer driver owns payload/SSRC rewriting in `PeerDriver::write_to_sender`,
+    /// so this only needs to carry kind + codec + one encoding with an SSRC.
+    pub fn media_track(&self) -> MediaStreamTrack {
         let ssrc = Uuid::new_v4().as_u128() as u32;
-        let track: Arc<dyn TrackLocal> = Arc::new(TrackLocalStaticRTP::new(MediaStreamTrack::new(
+        MediaStreamTrack::new(
             format!("stream-{}", self.publisher),
             format!("track-{}-{}", self.publisher, self.kind),
             format!("label-{}-{}", self.publisher, self.kind),
@@ -115,8 +115,7 @@ impl PublishedTrack {
                 codec: self.codec.clone(),
                 ..Default::default()
             }],
-        )));
-        (ssrc, track)
+        )
     }
 
     /// Hot path: called per RTP packet from publisher.
@@ -136,7 +135,6 @@ impl PublishedTrack {
             debug!("nal: {desc}");
         }
 
-        let outs = self.outputs.load_full();
         let q_ssrc = match self.simulcast_layers.get("q") {
             Some(val) => *val,
             None => return,
@@ -146,18 +144,10 @@ impl PublishedTrack {
             return;
         }
 
-        for o in outs.iter() {
-            let mut p = pkt.clone();
-
-
-            p.header.ssrc = o.ssrc;
-
-            p.header.extension = false;
-            p.header.extension_profile = 0;
-            p.header.extensions.clear();
-
-            if let Err(e) = o.track.write_rtp(p).await {
-                println!("forward {} -> {}: {e}", self.publisher, o.sub);
+        for o in self.outputs.load_full().iter() {
+            match o.tx.try_send(pkt.clone()) {
+                Ok(()) => {}
+                Err(_) => warn!("forward {} -> {}: fanout queue full", self.publisher, o.sub),
             }
         }
     }
@@ -175,38 +165,8 @@ impl PublishedTrack {
         self.outputs.load().iter().any(|o| o.sub == sub)
     }
 
-    pub fn set_remote_track(&self, track: Arc<dyn TrackRemote>) {
-        self.remote_track.store(Some(Arc::new(track)));
-    }
-
-    pub async fn send_pli(&self) {
-        let q_ssrc = match self.simulcast_layers.get("q") {
-            Some(val) => *val,
-            None => return,
-        };
-
-        if let Some(track) = self.remote_track.load_full() {
-            let pli = Box::new(
-                rtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication {
-                    sender_ssrc: 0,
-                    media_ssrc: q_ssrc,
-                },
-            );
-
-            println!("sending forced pli..");
-
-            if let Err(e) = track.write_rtcp(vec![pli]).await {
-                warn!(
-                    "Failed to send instant PLI for publisher {}: {e}",
-                    self.publisher
-                );
-            } else {
-                info!(
-                    "Instant PLI sent successfully for publisher SSRC {}",
-                    q_ssrc
-                );
-            }
-        }
+    pub fn renew_outputs(&self) -> Arc<Vec<Output>> {
+        self.outputs.swap(Arc::new(Vec::new()))
     }
 
     pub async fn add_output(&self, o: Output) {
@@ -215,11 +175,5 @@ impl PublishedTrack {
             n.push(o.clone());
             n
         });
-
-        self.send_pli().await;
-    }
-
-    pub fn renew_outputs(&self) -> Arc<Vec<Output>> {
-        self.outputs.swap(Arc::new(Vec::new()))
     }
 }

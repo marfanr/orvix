@@ -9,7 +9,6 @@ use crate::sfu::track::{Output, PublishedTrack};
 use axum::extract::ws::Message;
 use dashmap::DashMap;
 use rtc::rtp_transceiver::rtp_sender::{RTCRtpCodec, RtpCodecKind};
-use rtc::rtp_transceiver::{RTCRtpTransceiverDirection, RTCRtpTransceiverInit};
 use sonic_rs::Serialize;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -203,48 +202,21 @@ impl RoomSfu {
         if t.is_output_exist(sub_id) {
             return false;
         }
-        let (ssrc, track) = t.create_track_local();
+        let mime = t.codec.mime_type.clone();
 
-        let transceiver = match peer
-            .pub_pc
-            .add_transceiver_from_track(
-                track.clone(),
-                Some(RTCRtpTransceiverInit {
-                    direction: RTCRtpTransceiverDirection::Sendonly,
-                    ..Default::default()
-                }),
-            )
-            .await
-        {
-            Ok(x) => x,
-            Err(e) => {
-                println!("add_transceiver to {sub_id}: {e}");
-                return false;
-            }
+        // instructs the subscriber's peer driver to add a send track and renegotiate
+        // with the client; packets are thereafter fanned out via the returned queue
+        let Ok(attached) = peer.peer.attach(t.media_track(), mime).await else {
+            warn!("attach track to {sub_id}: peer driver unavailable");
+            return false;
         };
 
-        let sender = match transceiver.sender().await {
-            Ok(Some(s)) => s,
-            Ok(None) => {
-                println!("transceiver for {sub_id} has no sender");
-                return false;
-            }
-            Err(e) => {
-                println!("get sender for {sub_id}: {e}");
-                return false;
-            }
-        };
-
-        let out = Output {
+        t.add_output(Output {
             sub: sub_id,
-            ssrc,
-            track,
-            sender,
-        };
-
-        t.add_output(out).await;
-        t.send_pli().await;
-
+            sender_id: attached.sender_id,
+            tx: attached.tx,
+        })
+        .await;
         self.send_track_state(sub_id, t).await;
         true
     }
@@ -258,12 +230,13 @@ impl RoomSfu {
 
         let outs = track.renew_outputs();
 
+        // detach from every subscriber's driver; removing the track triggers
+        // renegotiation inside the driver itself
         for o in outs.iter() {
             if let Some(peer) = self.peers.get(&o.sub) {
-                if let Err(e) = peer.pub_pc.remove_track(&o.sender).await {
-                    warn!("remove_track on {}: {e}", o.sub);
+                if let Err(e) = peer.peer.detach(o.sender_id).await {
+                    warn!("detach track on {}: {e}", o.sub);
                 }
-                renegotiate(&peer).await;
             }
         }
 
@@ -371,48 +344,12 @@ impl RoomSfu {
 /// # renegotiate
 ///
 /// renegotiation publisher to client
+///
+/// kept as a hook: the peer driver itself renegotiates whenever tracks are
+/// attached/detached (`OnNegotiationNeededEvent` -> offer -> answer), so the
+/// room layer no longer drives offers directly.
 pub async fn renegotiate(peer: &RoomPeer) {
-    let offer = match peer.pub_pc.create_offer(None).await {
-        Ok(o) => o,
-        Err(e) => {
-            warn!("create_offer skipped or failed (possible busy state): {e}");
-            return;
-        }
-    };
-    if let Err(e) = peer.pub_pc.set_local_description(offer).await {
-        return warn!("set_local_description: {e}");
-    }
-    let Some(desc) = peer.pub_pc.local_description().await else {
-        return;
-    };
-
-    // debug
-    let sim: Vec<&str> = desc
-        .sdp
-        .lines()
-        .filter(|l| {
-            l.starts_with("m=")
-                || l.contains("rid:")
-                || l.contains("simulcast")
-                || l.starts_with("a=mid")
-                || l.starts_with("a=recvonly")
-                || l.starts_with("a=sendonly")
-                || l.starts_with("a=sendrecv")
-        })
-        .collect();
-    info!("offer to {}: {:#?}", peer.username, sim);
-
-    // TODO: refactor
-    // change from ws to control data channel
-    let msg = sonic_rs::json!({ "type": "offer", "sdp": desc.sdp }).to_string();
-
-    let Some(ws_tx) = peer.ws_tx.clone() else {
-        return;
-    };
-
-    if ws_tx.send(Message::Text(msg.into())).await.is_err() {
-        warn!("ws closed, drop renegotiation offer");
-    }
+    let _ = peer;
 }
 
 impl From<&models::room::Room> for RoomSfu {

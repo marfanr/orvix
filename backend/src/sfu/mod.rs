@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: AGPL-3.0
 
 pub mod errors;
-pub mod peer;
 pub mod record;
 pub mod room;
 pub mod track;

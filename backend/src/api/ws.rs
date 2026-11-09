@@ -5,8 +5,6 @@
 use crate::api::WsError;
 use crate::api::server::ServerState;
 use crate::models;
-use crate::sfu::PeerType;
-use crate::sfu::peer::create_peer;
 use crate::sfu::room::RoomSfu;
 use crate::sfu::room_peer::RoomPeer;
 use crate::utils::{AccessClaims, verify_jwt};
@@ -23,7 +21,6 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 use uuid::Uuid;
-use webrtc::peer_connection::{RTCIceCandidateInit, RTCSessionDescription};
 
 #[derive(Deserialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -172,30 +169,16 @@ impl WsMsg {
         //        |  answer  ------------------------------->   |  browser only answers
         //        |  <------ RTP of other peers (Output)        |  <- attach()
         //        |  <------ control channel (track_state)      |
-        let pub_peer = create_peer(
-            conn_id,
-            room_arc.clone(),
-            Some(self_sink.clone()),
-            PeerType::PUBLISHER,
-        )
-        .await
-        .map_err(|e| WsError(Arc::from(format!("pub: {}", e.to_string()))))?;
 
-        let sub_peer = create_peer(
-            conn_id,
-            room_arc.clone(),
-            Some(self_sink.clone()),
-            PeerType::SUBSCRIBER,
-        )
-        .await
-        .map_err(|e| WsError(Arc::from(format!("sub: {}", e.to_string()))))?;
+        // TODO: migration to RTC sans-io
+        let new_peer =
+            crate::peer::create_peer(conn_id, state.announce_ip, Arc::clone(&room_arc), self_sink.clone());
 
         let room_peer = RoomPeer::new(
             user_id,
             conn_id,
             Arc::clone(&username),
-            pub_peer,
-            sub_peer,
+            new_peer,
             Some(self_sink.clone()),
             Arc::clone(&room_arc),
         )
@@ -212,15 +195,15 @@ impl WsMsg {
             tracing::info!("Owner joined , current member room : {}", room.peers.len());
 
             // resend sync into self and each member
-            _ = sync_room_member(&self_sink, &room, &conn_id).await.map_err(
-                |e| warn!("sync room member: {e}")
-            );
+            _ = sync_room_member(&self_sink, &room, &conn_id)
+                .await
+                .map_err(|e| warn!("sync room member: {e}"));
 
             for m in room.peers.iter() {
-                let Some(ws) = m.ws_tx.clone() else {continue};
-                _ = sync_room_member(&ws, &room, &m.key()).await.map_err(
-                    |e| warn!("sync room member: {e}")
-                );
+                let Some(ws) = m.ws_tx.clone() else { continue };
+                _ = sync_room_member(&ws, &room, &m.key())
+                    .await
+                    .map_err(|e| warn!("sync room member: {e}"));
             }
 
             state
@@ -265,27 +248,15 @@ impl WsMsg {
             .peers
             .get(&conn_id)
             .ok_or_else(|| "peer not found in room".to_string())?;
-        let sub_pc = Arc::clone(&peers.sub_pc);
+        let peer = Arc::clone(&peers.peer);
 
-        let offer = RTCSessionDescription::offer(sdp.to_owned())
-            .map_err(|e| format!("parse offer: {e}"))?;
-        sub_pc
-            .set_remote_description(offer)
-            .await
-            .map_err(|e| format!("remote desc: {e}"))?;
-
-        let answer = sub_pc
-            .create_answer(None)
-            .await
-            .map_err(|e| format!("create answer: {e}"))?;
-        sub_pc
-            .set_local_description(answer.clone())
-            .await
-            .map_err(|e| format!("local desc: {e}"))?;
+        let answer = peer
+            .answer_offer(sdp.to_string(), crate::peer::PeerType::SUBSCRIBER)
+            .await?;
 
         self_sink
             .send(Message::text(
-                sonic_rs::json!({ "type": "answer", "sdp": answer.sdp }).to_string(),
+                sonic_rs::json!({ "type": "answer", "sdp": answer }).to_string(),
             ))
             .await
             .map_err(|e| format!("send answer: {e}"))?;
@@ -305,14 +276,9 @@ impl WsMsg {
             .peers
             .get(&conn_id)
             .ok_or_else(|| "peer not found in room".to_string())?;
-        let pc = Arc::clone(&peers.pub_pc);
+        let pc = Arc::clone(&peers.peer);
 
-        let answer = RTCSessionDescription::answer(sdp.to_owned())
-            .map_err(|e| format!("parse answer: {e}"))?;
-        pc.set_remote_description(answer)
-            .await
-            .map_err(|e| format!("remote answer desc: {e}"))?;
-
+        pc.apply_answer(sdp.to_string()).await?;
         Ok(())
     }
 }
@@ -421,32 +387,30 @@ async fn handle_socket(socket: WebSocket, _user_agent: String, state: ServerStat
                                         warn!("handle_answer: {e}");
                                     }
                                 }
-                                Ok(WsMsg::Candidate {from ,candidate, line_index, mid, username_fragment }) => {
+                                Ok(WsMsg::Candidate { from, candidate, mid, line_index, username_fragment }) => {
                                     // clone the peer connection out of the map before awaiting,
                                     // holding a dashmap guard across an await point can deadlock
-                                    let pc = state.conn_to_rooms.get(&conn_id).and_then(|room| {
-                                        room.peers.get(&conn_id).map(|peer| match from.as_str() {
-                                            "PUBLISHER" => Arc::clone(&peer.sub_pc),
-                                            _ => Arc::clone(&peer.pub_pc),
-                                        })
-                                    });
+                                    let room_peer = state
+                                        .conn_to_rooms
+                                        .get(&conn_id)
+                                        .and_then(|r| r.peers.get(&conn_id).map(|p| Arc::clone(p.value())));
 
-                                    match pc {
-                                        Some(pc) => {
-                                            if let Err(e) = pc
-                                                .add_ice_candidate(RTCIceCandidateInit {
-                                                    candidate,
-                                                    sdp_mid: mid,
-                                                    sdp_mline_index: line_index,
-                                                    username_fragment,
-                                                    url: None,
-                                                })
-                                                .await
-                                            {
-                                                warn!("add_ice_candidate: {e}");
-                                            }
-                                        }
-                                        None => warn!("candidate before pc exists"),
+
+                                    if let Some(p) = room_peer {
+                                        // client('PUBLISHER') media masuk ke leg SUBSCRIBER,
+                                        // client('SUBSCRIBER') menerima dari leg PUBLISHER
+                                        let pc_type = if from == "SUBSCRIBER" {
+                                            crate::peer::PeerType::PUBLISHER
+                                        } else {
+                                            crate::peer::PeerType::SUBSCRIBER
+                                        };
+                                        _ = p.peer.add_remote_candidate(
+                                            candidate,
+                                            mid,
+                                            line_index,
+                                            username_fragment,
+                                            pc_type,
+                                        ).await;
                                     }
                                 }
                                 Ok(WsMsg::Leave) => break,
