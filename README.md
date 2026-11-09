@@ -127,7 +127,7 @@ The backend handles WebRTC peer connections, media forwarding, authentication, r
 
 - [![Rust][rust-badge]][rust-url] (edition 2024)
 - [![Axum][axum-badge]][axum-url] for HTTP and WebSocket endpoints
-- [webrtc-rs](https://github.com/webrtc-rs/webrtc) for the SFU
+- [rtc](https://github.com/webrtc-rs/rtc) sans-io WebRTC stack for the SFU (`RTCPeerConnection` state machines driven by per-core worker threads and a UDP mux)
 - [![PostgreSQL][postgres-badge]][postgres-url] via `tokio-postgres` + `deadpool-postgres`
 - `argon2` password hashing, `jsonwebtoken`, `sonic-rs`, `validator`
 - `ort` (ONNX Runtime) for local AI inference
@@ -146,17 +146,17 @@ The backend handles WebRTC peer connections, media forwarding, authentication, r
 flowchart LR
     subgraph Browser["Browser · Vue 3 client"]
         UI["UI · Pinia · Router"]
-        PUB["Peer 1 · Publisher PC<br/>mic · cam · screen"]
-        SUB["Peer 2 · Subscriber PC<br/>remote tracks · chat/control"]
+        PUB["Publisher PC<br/>mic · cam · screen"]
+        SUB["Subscriber PC<br/>remote tracks · chat/control"]
     end
 
     subgraph Backend["Rust backend · Axum"]
         API["REST API"]
         WS["WebSocket signaling"]
-        subgraph SFU["RoomSfu"]
-            PP["Publisher peer · receives"]
-            SP["Subscriber peer · sends"]
-            TR["Track fan-out · simulcast"]
+        subgraph Pool["Peer worker pool · sans-io<br/>one thread + runtime per core"]
+            MUX["UDP mux<br/>single socket per worker<br/>ICE ufrag → peer routing"]
+            DIR["PeerDriver event loop<br/>publisher + subscriber `RTCPeerConnection`<br/>handle_read · poll_write · poll_timeout"]
+            ROOM["RoomSfu<br/>track fan-out · simulcast · record hooks"]
         end
     end
 
@@ -167,19 +167,22 @@ flowchart LR
 
     UI -->|"HTTPS · JSON"| API
     UI <-->|"WSS · signaling"| WS
-    PUB -->|"SRTP · publish"| PP
-    PP --> TR
-    TR -->|"SRTP · subscribe"| SP
-    SP --> SUB
+    PUB <-->|"UDP · STUN/DTLS/SRTP (muxed)"| MUX
+    SUB <-->|"UDP · STUN/DTLS/SRTP (muxed)"| MUX
+    WS -->|"PeerCommand"| DIR
+    MUX -->|"inbound packets"| DIR
+    DIR <-->|"fan-out"| ROOM
     API --> DB
-    SFU --> DB
+    ROOM --> DB
     API --> OTEL
-    SFU --> OTEL
-    SFU --> REC
+    Pool --> OTEL
+    ROOM --> REC
     OTEL --> OBS
 ```
 
 Each participant owns **two peer connections**: a **publisher PC** that sends local tracks into the SFU, and a **subscriber PC** that receives the fan-out tracks from other participants. Chat and control messages travel over WebRTC data channels.
+
+The media stack is now **sans-io**: peers run on the [`rtc`](https://github.com/webrtc-rs/rtc) protocol state machine inside a `PeerDriver` event loop, decoupled from the network and async runtime. Peer work is sharded across a **worker pool** (one OS thread + current-thread Tokio runtime per CPU core); each worker binds a **single UDP mux socket** that demultiplexes STUN/DTLS/SRTP to the right peer by ICE user fragment, so all legs of a call share one socket. Signaling reaches a driver as batched `PeerCommand`s, and the SFU forwards RTP packets between drivers' inbound tracks and outbound senders.
 
 The backend exposes four route groups under the same Axum server:
 
@@ -187,7 +190,7 @@ The backend exposes four route groups under the same Axum server:
 | --- | --- |
 | **API** | Registration, authentication, room creation/joining, metrics, health. |
 | **WebSocket** | Initial signaling, SDP negotiation, join requests, and real-time events. |
-| **SFU** | One publisher and one subscriber `PeerConnection` per participant, track fan-out, simulcast layers, and recording hooks. |
+| **Peer worker pool** | Per-core workers running the `rtc` sans-io stack; a UDP mux per worker, a `PeerDriver` event loop per participant (publisher + subscriber connections), and SFU track fan-out with simulcast layers and recording hooks. |
 | **Models** | Typed PostgreSQL access for `users`, `refresh_tokens`, and `room`. |
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
@@ -352,6 +355,7 @@ vidcall/
 │   ├── otel/                # Collector, Prometheus, Tempo, Loki configs
 │   ├── src/
 │   │   ├── api/             # HTTP routes, auth, WebSocket, metrics
+│   │   ├── peer/            # sans-io drivers, worker pool, UDP mux, ICE
 │   │   ├── models/          # PostgreSQL data-access layer
 │   │   ├── sfu/             # Rooms, peers, tracks, recording
 │   │   ├── ai/              # ONNX TTS/STT experiments
