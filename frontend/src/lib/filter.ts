@@ -25,7 +25,6 @@ const KERNEL = (() => {
   return k
 })()
 
-// --- buffer mask (dialokasi ulang hanya kalau ukuran berubah) ---
 let bufW = 0
 let bufH = 0
 let a = new Uint8Array(0)
@@ -48,8 +47,60 @@ function ensureBuffers(w: number, h: number): void {
   hasPrev = false
 }
 
-// Erosi/dilatasi 3x3 separable, satu sumbu per pemanggilan. Piksel di luar batas diabaikan.
-function morph3(
+export function morph3H(
+  src: Uint8Array,
+  dst: Uint8Array,
+  w: number,
+  h: number,
+  useMin: boolean,
+): void {
+  if (w === 1) {
+    dst.set(src.subarray(0, h))
+    return
+  }
+  for (let y = 0; y < h; y++) {
+    const b = y * w
+    const last = b + w - 1
+    if (useMin) {
+      dst[b] = Math.min(src[b]!, src[b + 1]!)
+      for (let i = b + 1; i < last; i++) {
+        dst[i] = Math.min(src[i - 1]!, src[i]!, src[i + 1]!)
+      }
+      dst[last] = Math.min(src[last - 1]!, src[last]!)
+    } else {
+      dst[b] = Math.max(src[b]!, src[b + 1]!)
+      for (let i = b + 1; i < last; i++) {
+        dst[i] = Math.max(src[i - 1]!, src[i]!, src[i + 1]!)
+      }
+      dst[last] = Math.max(src[last - 1]!, src[last]!)
+    }
+  }
+}
+
+export function morph3V(
+  src: Uint8Array,
+  dst: Uint8Array,
+  w: number,
+  h: number,
+  useMin: boolean,
+): void {
+  for (let y = 0; y < h; y++) {
+    const p = (y > 0 ? y - 1 : y) * w
+    const c = y * w
+    const n = (y < h - 1 ? y + 1 : y) * w
+    if (useMin) {
+      for (let x = 0; x < w; x++) {
+        dst[c + x] = Math.min(src[p + x]!, src[c + x]!, src[n + x]!)
+      }
+    } else {
+      for (let x = 0; x < w; x++) {
+        dst[c + x] = Math.max(src[p + x]!, src[c + x]!, src[n + x]!)
+      }
+    }
+  }
+}
+
+export function morph3(
   src: Uint8Array,
   dst: Uint8Array,
   w: number,
@@ -57,32 +108,8 @@ function morph3(
   horizontal: boolean,
   useMin: boolean,
 ): void {
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const i = y * w + x
-      let v = src[i]!
-      if (horizontal) {
-        if (x > 0) {
-          const n = src[i - 1]!
-          v = useMin ? (n < v ? n : v) : n > v ? n : v
-        }
-        if (x < w - 1) {
-          const n = src[i + 1]!
-          v = useMin ? (n < v ? n : v) : n > v ? n : v
-        }
-      } else {
-        if (y > 0) {
-          const n = src[i - w]!
-          v = useMin ? (n < v ? n : v) : n > v ? n : v
-        }
-        if (y < h - 1) {
-          const n = src[i + w]!
-          v = useMin ? (n < v ? n : v) : n > v ? n : v
-        }
-      }
-      dst[i] = v
-    }
-  }
+  if (horizontal) morph3H(src, dst, w, h, useMin)
+  else morph3V(src, dst, w, h, useMin)
 }
 
 // BORDER_REFLECT_101
@@ -114,19 +141,6 @@ function gaussian(src: Uint8Array, dst: Uint8Array, w: number, h: number): void 
       dst[y * w + x] = s + 0.5
     }
   }
-}
-
-// API lama dipertahankan sebagai no-op supaya import di worker tidak perlu diubah.
-export function initOpenCV(): Promise<void> {
-  return Promise.resolve()
-}
-
-export function isOpenCvReady(): boolean {
-  return true
-}
-
-export function disposeOpenCV(): void {
-  hasPrev = false
 }
 
 export function drawBlurred(
@@ -174,10 +188,9 @@ export function writeSmoothedMask(
   ensureBuffers(w, h)
   const n = w * h
 
-  // label 0 = orang -> 255
   for (let i = 0; i < n; i++) a[i] = labels[i] === 0 ? 255 : 0
 
-  // morphological open (erode lalu dilate), hasil akhir di `a`
+  // morphological open
   morph3(a, b, w, h, true, true)
   morph3(b, a, w, h, false, true)
   morph3(a, b, w, h, true, false)
@@ -194,7 +207,7 @@ export function writeSmoothedMask(
   prev.set(blurred)
   hasPrev = true
 
-  // kontras di sekitar 128, lalu tulis ke alpha (little-endian: byte tertinggi)
+  // contrass in arround 128
   const offset = 128 * (1 - SHARPEN)
   for (let i = 0; i < n; i++) {
     let v = blurred[i]! * SHARPEN + offset

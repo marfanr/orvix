@@ -6,10 +6,8 @@
 import { FilesetResolver, ImageSegmenter } from '@mediapipe/tasks-vision'
 import type { Background } from '@/types/video-call.ts'
 import {
-  disposeOpenCV,
   drawBlurred,
   drawCover,
-  initOpenCV,
   writeSmoothedMask,
 } from '@/lib/filter.ts'
 
@@ -183,12 +181,6 @@ async function initSegmenter(): Promise<void> {
   warmUp(instance)
   segmenter = instance
   // console.log(`[video.worker] warm-up done +${since()}ms`)
-}
-
-async function initFilters(): Promise<void> {
-  await initOpenCV()
-  // console.log(`[video.worker] opencv ready +${since()}ms`)
-  if (disposed) disposeOpenCV()
 }
 
 function drawSegmenterInput(frame: VideoFrame): void {
@@ -413,9 +405,6 @@ function startWorker(): void {
     .finally(() => {
       initDone = true
       if (disposed) return
-      setTimeout(() => {
-        initFilters().catch((e: unknown) => console.error('opencv init error:', e))
-      }, 0)
     })
 }
 
@@ -424,6 +413,5 @@ function stopWorker(): void {
   pipeAbort?.abort()
   segmenter?.close()
   segmenter = null
-  disposeOpenCV()
   self.close()
 }
