@@ -54,44 +54,7 @@
 - **Observability:** OpenTelemetry, Prometheus, Loki, Tempo, and provisioned Grafana dashboards.
 
 ## Architecture
-
-```mermaid
-flowchart LR
-    subgraph Browser["Browser · Vue 3 client"]
-        UI["UI · Pinia · Router"]
-        PUB["Publisher PC<br/>mic · cam · screen"]
-        SUB["Subscriber PC<br/>remote tracks · chat/control"]
-    end
-
-    subgraph Backend["Rust backend · Axum"]
-        API["REST API"]
-        WS["WebSocket signaling"]
-        subgraph Pool["Peer worker pool · sans-io<br/>one thread + runtime per core"]
-            MUX["UDP mux<br/>single socket per worker<br/>ICE ufrag → peer routing"]
-            DIR["PeerDriver event loop<br/>publisher + subscriber `RTCPeerConnection`<br/>handle_read · poll_write · poll_timeout"]
-            ROOM["RoomSfu<br/>track fan-out · simulcast · record hooks"]
-        end
-    end
-
-    DB[("PostgreSQL")]
-    REC[("Recordings · ffmpeg")]
-    OTEL["OpenTelemetry Collector"]
-    OBS["Tempo · Loki · Prometheus · Grafana"]
-
-    UI -->|"HTTPS · JSON"| API
-    UI <-->|"WSS · signaling"| WS
-    PUB <-->|"UDP · STUN/DTLS/SRTP (muxed)"| MUX
-    SUB <-->|"UDP · STUN/DTLS/SRTP (muxed)"| MUX
-    WS -->|"PeerCommand"| DIR
-    MUX -->|"inbound packets"| DIR
-    DIR <-->|"fan-out"| ROOM
-    API --> DB
-    ROOM --> DB
-    API --> OTEL
-    Pool --> OTEL
-    ROOM --> REC
-    OTEL --> OBS
-```
+<img src=".assets/architecture.png" alt="Orvix architecture" width="100%" />
 
 For SFU internals, API reference, data models, and the full environment variable list, see the [documentation](docs/md/index.md).
 
