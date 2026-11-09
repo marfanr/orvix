@@ -6,7 +6,6 @@ pub mod errors;
 pub mod record;
 pub mod room;
 pub mod track;
-mod data_channel;
 pub mod room_peer;
 
 #[derive(Debug, Copy, Clone)]

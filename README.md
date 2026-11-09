@@ -41,7 +41,7 @@
 
 ## About
 
-**Orvix** (repository: **VidCall**) is a self-hosted video conferencing system for teams that want full control over their meetings. A Rust backend with a purpose-built Selective Forwarding Unit (SFU) handles WebRTC media, authentication, and rooms, while a Vue 3 frontend provides the meeting experience. Media flows through your own infrastructure, with no third-party service involved.
+**Orvix** is a self-hosted video conferencing system for teams that want full control over their meetings. A Rust backend with a purpose-built Selective Forwarding Unit (SFU) handles WebRTC media, authentication, and rooms, while a Vue 3 frontend provides the meeting experience. Media flows through your own infrastructure, with no third-party service involved.
 
 ## Features
 
@@ -127,10 +127,9 @@ cd frontend && bun install && bun dev
 - [x] Waiting room and join requests
 - [x] Chat, reactions, and screen sharing
 - [x] Server-side recording
-- [ ] Consolidated, automated database migrations
 - [ ] End-to-end encrypted media
 - [ ] Horizontal SFU scaling for large rooms
-- [ ] Production deployment guides and Helm charts
+- [ ] docker image for production ready
 
 See the [open issues](https://github.com/marfanr/vidcall/issues) for proposed features and known issues.
 

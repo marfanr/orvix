@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Mohammad Arfan
+//
+// SPDX-License-Identifier: AGPL-3.0
+
 import { ref } from 'vue'
 import { SupportedVideoCodec } from '@/types/video-call.ts'
 import { useMeetingConfigStore } from '@/stores/meetingConfig'

@@ -37,6 +37,7 @@ async fn handle_control_message(conn_id: Uuid, msg: RTCDataChannelMessage) {
     match json {
         Ok(ControlMessage::Record) => {
             info!("conn {conn_id}: received record control command via data channel");
+            // start_record_bot(room.clone()).await;
         }
         Err(e) => {
             debug!("conn {conn_id}: control parse err: {e}");
