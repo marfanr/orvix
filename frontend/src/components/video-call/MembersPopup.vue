@@ -75,9 +75,6 @@ onUnmounted(() => {
           <span class="text-[13px] font-medium text-gray-800 truncate">
             {{ p.name }}
           </span>
-          <span v-if="p.conn_id" class="text-[11px] text-gray-400 truncate" title="Connection ID">
-            {{ p.conn_id }}
-          </span>
         </span>
 
         <span

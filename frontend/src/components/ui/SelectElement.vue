@@ -105,7 +105,7 @@ const helpOpen = computed(() => helpHovered.value || helpPinned.value)
 
 .select-custom option:hover,
 .select-custom option:focus-visible {
-  background: var(--color-gray-100); /* ganti warna hover di sini */
+  background: var(--color-brown-ribbon-50);
 }
 
 .select-custom option:checked {
