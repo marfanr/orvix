@@ -3,17 +3,21 @@ use std::{cell::RefCell, collections::HashMap, net::SocketAddr, rc::Rc, time::Du
 use tokio::{net::UdpSocket, sync::mpsc};
 use uuid::Uuid;
 
-use crate::{peer::{constant::PEER_QUEUE, stun::gather_srflx}, utils::stun_local_ufrag};
+use crate::{
+    peer::{PeerType, constant::PEER_QUEUE, stun::gather_srflx},
+    utils::stun_local_ufrag,
+};
 
-pub type MuxInbound = (SocketAddr, BytesMut);
+/// (remote addr, payload, leg of the conn this packet belongs to)
+pub type MuxInbound = (SocketAddr, BytesMut, PeerType);
 
 pub struct Mux {
     pub socket: UdpSocket,
     pub port: u16,
     peers: RefCell<HashMap<Uuid, mpsc::Sender<MuxInbound>>>,
-    ufrags: RefCell<HashMap<String, Uuid>>,
+    ufrags: RefCell<HashMap<String, (Uuid, PeerType)>>,
     pub srflx_addr: Option<SocketAddr>,
-    addrs: RefCell<HashMap<SocketAddr, Uuid>>,
+    addrs: RefCell<HashMap<SocketAddr, (Uuid, PeerType)>>,
 }
 
 thread_local! {
@@ -21,10 +25,14 @@ thread_local! {
 }
 
 pub async fn init_mux(port: u16) {
-    let Ok(socket) = UdpSocket::bind(("0.0.0.0", port)).await else {
-        return;
+    let socket = match UdpSocket::bind(("0.0.0.0", port)).await {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!("mux bind udp 0.0.0.0:{port}: {e}");
+            return;
+        }
     };
-    let slfx_addr = gather_srflx(&socket, "stun.l.google.com:19302").await.ok();
+    let srflx_addr = gather_srflx(&socket, "stun.l.google.com:19302").await.ok();
 
     let mux = Rc::new(Mux {
         socket,
@@ -32,7 +40,7 @@ pub async fn init_mux(port: u16) {
         peers: Default::default(),
         ufrags: Default::default(),
         addrs: Default::default(),
-        srflx_addr: slfx_addr,
+        srflx_addr,
     });
     MUX.with(|m| *m.borrow_mut() = Some(Rc::clone(&mux)));
     tokio::task::spawn_local(mux.run());
@@ -50,7 +58,7 @@ impl Mux {
     async fn run(self: Rc<Self>) {
         let mut buf = vec![0u8; 2048];
         loop {
-            let (n, from) = match self.socket.recv_buf_from(&mut buf).await {
+            let (n, from) = match self.socket.recv_from(&mut buf).await {
                 Ok(v) => v,
                 Err(e) => {
                     tracing::error!("mux recv: {e}");
@@ -61,19 +69,29 @@ impl Mux {
 
             let data = &buf[..n];
 
-            let id = if let Some(ufrag) = stun_local_ufrag(data) {
-                let id = self.ufrags.borrow().get(&ufrag).copied();
-                if let Some(id) = id {
-                    self.addrs.borrow_mut().insert(from, id);
+            let route = if let Some(ufrag) = stun_local_ufrag(data) {
+                let route = self.ufrags.borrow().get(&ufrag).copied();
+                match route {
+                    Some(r) => {
+                        self.addrs.borrow_mut().insert(from, r);
+                    }
+                    None => tracing::debug!("mux: stun from {from} with unknown ufrag {ufrag}"),
                 }
-                id
+                route
             } else {
                 self.addrs.borrow().get(&from).copied()
             };
 
-            if let Some(id) = id {
-                if let Some(tx) = self.peers.borrow().get(&id) {
-                    let _ = tx.try_send((from, BytesMut::from(data)));
+            let Some((id, leg)) = route else {
+                tracing::trace!("mux: drop {n}B from {from}, no route");
+                continue;
+            };
+
+            if let Some(tx) = self.peers.borrow().get(&id) {
+                if tx.try_send((from, BytesMut::from(data), leg)).is_err() {
+                    tracing::warn!(
+                        "mux: queue full or closed for {id}, dropping packet from {from}"
+                    );
                 }
             }
         }
@@ -85,15 +103,15 @@ impl Mux {
         rx
     }
 
-    pub fn bind_ufrag(&self, id: Uuid, ufrag: String) {
-        let mut m = self.ufrags.borrow_mut();
-        m.retain(|_, v| *v != id);
-        m.insert(ufrag, id);
+    /// Binds a local ufrag to (conn, leg). Both legs of one conn each have
+    /// their own ufrag; all are kept.
+    pub fn bind_ufrag(&self, id: Uuid, leg: PeerType, ufrag: String) {
+        self.ufrags.borrow_mut().insert(ufrag, (id, leg));
     }
 
     pub fn unregister(&self, id: Uuid) {
         self.peers.borrow_mut().remove(&id);
-        self.ufrags.borrow_mut().retain(|_, v| *v != id);
-        self.addrs.borrow_mut().retain(|_, v| *v != id);
+        self.ufrags.borrow_mut().retain(|_, v| v.0 != id);
+        self.addrs.borrow_mut().retain(|_, v| v.0 != id);
     }
 }

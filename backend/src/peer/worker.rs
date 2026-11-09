@@ -1,5 +1,6 @@
-use std::{net::IpAddr, ops::Add, sync::OnceLock, thread};
+use std::{net::IpAddr, ops::Add, sync::OnceLock, thread::Builder, sync::Arc};
 
+use axum::extract::ws;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -7,12 +8,15 @@ use crate::peer::{
     cmd::{PeerCommand, handle_msg},
     mux::init_mux,
 };
+use crate::sfu::room::RoomSfu;
 
 pub enum WorkerMessage {
     CreatePeer {
         announce_ip: IpAddr,
         rx: mpsc::Receiver<PeerCommand>,
         conn_id: Uuid,
+        room: Arc<RoomSfu>,
+        ws_sink: mpsc::Sender<ws::Message>
     },
 }
 
@@ -29,8 +33,8 @@ pub fn worker_pool() -> &'static [mpsc::UnboundedSender<WorkerMessage>] {
                 let base_port = 4718;
                 let (tx, mut rx) = mpsc::unbounded_channel::<WorkerMessage>();
                 // spawn worker thread
-                thread::Builder::new()
-                    .name(format!("peer-worker-{i}"))
+                let builder = Builder::new().name(format!("peer-worker-{i}"));
+                let _ = builder
                     .spawn(move || {
                         let rt = tokio::runtime::Builder::new_current_thread()
                             .enable_all()

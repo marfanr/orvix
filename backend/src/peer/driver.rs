@@ -1,9 +1,4 @@
-use std::collections::HashMap;
-use std::net::SocketAddr;
-use std::pin::Pin;
-use std::rc::Rc;
-use std::task::{Context, Poll};
-use std::time::Instant;
+use axum::extract::ws;
 use futures_util::stream::{SelectAll, Stream, StreamExt};
 use rtc::data_channel::RTCDataChannelId;
 use rtc::peer_connection::RTCPeerConnection;
@@ -11,10 +6,19 @@ use rtc::rtp;
 use rtc::rtp_transceiver::RTCRtpSenderId;
 use rtc::sansio::Protocol;
 use rtc::shared::{TaggedBytesMut, TransportContext, TransportProtocol};
+use std::collections::HashMap;
+use std::net::SocketAddr;
+use std::pin::Pin;
+use std::rc::Rc;
+use std::sync::Arc;
+use std::task::{Context, Poll};
+use std::time::Instant;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
+use crate::peer::PeerType;
+use crate::sfu::room::RoomSfu;
 use crate::{
     peer::{
         cmd::PeerCommand,
@@ -70,6 +74,8 @@ pub(super) struct PeerDriver {
     pub(super) offer_outstanding: bool,
     pub(super) pending_renegotiation: bool,
     pub(super) closing: bool,
+    pub(super) room: Arc<RoomSfu>,
+    pub(super) ws_sink: mpsc::Sender<ws::Message>,
 }
 
 impl Drop for PeerDriver {
@@ -81,7 +87,12 @@ impl Drop for PeerDriver {
 impl PeerDriver {
     /// run peer driver event loop
     pub async fn run(mut self) {
-        info!("running peer driver for conn {} on {}", self.conn_id, self.local_addr);
+        info!(
+            "running peer driver for conn {} on {}",
+            self.conn_id, self.local_addr
+        );
+
+        self.send_offer_to_client().await;
 
         'a: loop {
             for _ in 0..CMD_BATCH {
@@ -130,9 +141,10 @@ impl PeerDriver {
                     }
                 }
 
+
                 net = self.net_rx.recv() => {
                     match net {
-                        Some((peer_addr, data)) => {
+                        Some((peer_addr, data, peer_type)) => {
                             let read_pub = TaggedBytesMut {
                                 now: Instant::now(),
                                 transport: TransportContext {
@@ -143,23 +155,16 @@ impl PeerDriver {
                                 },
                                 message: data.clone(),
                             };
-                            if let Err(e) = self.publisher_pc.handle_read(read_pub) {
+
+                            let pc : &mut RTCPeerConnection = match peer_type {
+                                PeerType::SUBSCRIBER => &mut self.subscriber_pc,
+                                PeerType::PUBLISHER => &mut self.publisher_pc
+                            };
+
+                            if let Err(e) = pc.handle_read(read_pub) {
                                 debug!("conn {}: publisher handle_read: {e}", self.conn_id);
                             }
 
-                            let read_sub = TaggedBytesMut {
-                                now: Instant::now(),
-                                transport: TransportContext {
-                                    local_addr: self.local_addr,
-                                    peer_addr,
-                                    ecn: None,
-                                    transport_protocol: TransportProtocol::UDP,
-                                },
-                                message: data,
-                            };
-                            if let Err(e) = self.subscriber_pc.handle_read(read_sub) {
-                                debug!("conn {}: subscriber handle_read: {e}", self.conn_id);
-                            }
                         }
                         None => break 'a,
                     }
@@ -193,9 +198,9 @@ impl PeerDriver {
         self.inbound.clear();
     }
 
-    pub(super) fn bind_ufrag_from(&self, sdp: &str) {
+    pub(super) fn bind_ufrag_from(&self, sdp: &str, peer_type: PeerType) {
         if let Some(u) = utils::ice_ufrag(sdp) {
-            self.mux.bind_ufrag(self.conn_id, u.to_owned());
+            self.mux.bind_ufrag(self.conn_id, peer_type, u.to_owned());
         }
     }
 
@@ -214,7 +219,10 @@ impl PeerDriver {
                 .send_to(&msg.message, msg.transport.peer_addr)
                 .await
             {
-                warn!("socket write (publisher) to {}: {e}", msg.transport.peer_addr);
+                warn!(
+                    "socket write (publisher) to {}: {e}",
+                    msg.transport.peer_addr
+                );
             }
         }
         while let Some(msg) = self.subscriber_pc.poll_write() {
@@ -224,7 +232,10 @@ impl PeerDriver {
                 .send_to(&msg.message, msg.transport.peer_addr)
                 .await
             {
-                warn!("socket write (subscriber) to {}: {e}", msg.transport.peer_addr);
+                warn!(
+                    "socket write (subscriber) to {}: {e}",
+                    msg.transport.peer_addr
+                );
             }
         }
     }
@@ -247,7 +258,7 @@ impl PeerDriver {
     }
 
     fn write_to_sender(&mut self, sender_id: RTCRtpSenderId, mut pkt: rtp::Packet) {
-        let Some(mut sender) = self.subscriber_pc.rtp_sender(sender_id) else {
+        let Some(mut sender) = self.publisher_pc.rtp_sender(sender_id) else {
             return;
         };
         let Some(leg) = self.outbound.get_mut(&sender_id) else {

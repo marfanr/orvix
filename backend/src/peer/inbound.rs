@@ -1,14 +1,19 @@
-use crate::peer::constant::{IDLE_TIMEOUT, PLI_INTERVAL};
+use crate::peer::constant::{FORWARD_RID, IDLE_TIMEOUT, PLI_INTERVAL};
 use crate::peer::driver::PeerDriver;
 use rtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
 use rtc::rtp_transceiver::rtp_sender::RtpCodecKind;
 use rtc::rtp_transceiver::{RTCRtpReceiverId, RtpStreamId};
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Instant;
 use tracing::{debug, info, warn};
 
+/// which leg owns the receiver: `false` = publisher leg, `true` = subscriber leg
+/// (client media arrives on the subscriber leg, see `ws.rs::handle_offer`)
 pub struct InboundTrack {
     pub(super) receiver_id: RTCRtpReceiverId,
+    pub(super) subscriber: bool,
+    pub(super) kind: RtpCodecKind,
     pub(super) layers: HashMap<u32, String>,
     pub(super) is_video: bool,
     pub(super) last_rtp: Instant,
@@ -30,13 +35,19 @@ impl InboundTrack {
 impl PeerDriver {
     pub(super) async fn handle_inbound_track(
         &mut self,
+        subscriber: bool,
         receiver_id: RTCRtpReceiverId,
         track_id: String,
         ssrc: u32,
         rid: Option<RtpStreamId>,
     ) {
         let (kind, codec) = {
-            let Some(receiver) = self.publisher_pc.rtp_receiver(receiver_id) else {
+            let receiver = if subscriber {
+                self.subscriber_pc.rtp_receiver(receiver_id)
+            } else {
+                self.publisher_pc.rtp_receiver(receiver_id)
+            };
+            let Some(receiver) = receiver else {
                 warn!("conn {}: track open without receiver", self.conn_id);
                 return;
             };
@@ -53,7 +64,8 @@ impl PeerDriver {
             );
             (kind, codec)
         };
-        let rid_ = rid.clone().unwrap_or_else(|| "default".to_string());
+        let is_video = kind == RtpCodecKind::Video;
+        let rid_ = rid.unwrap_or_else(|| FORWARD_RID.to_owned());
 
         let now = Instant::now();
 
@@ -65,20 +77,34 @@ impl PeerDriver {
                 self.conn_id,
                 state.layers.len()
             );
-            return;
+        } else {
+            self.inbound.insert(
+                track_id,
+                InboundTrack {
+                    receiver_id,
+                    subscriber,
+                    kind,
+                    layers: HashMap::from([(ssrc, rid_.clone())]),
+                    is_video,
+                    last_rtp: now,
+                    last_pli: None,
+                    pli_until: now,
+                    paused: true,
+                },
+            );
         }
 
-        self.inbound.insert(
-            track_id,
-            InboundTrack {
-                receiver_id,
-                layers: HashMap::from([(ssrc, rid_)]),
-                is_video: kind == RtpCodecKind::Video,
-                last_rtp: now,
-                last_pli: None,
-                pli_until: now,
-                paused: true,
-            },
+        // publish into the room: creates the PublishedTrack on the first layer,
+        // registers simulcast layers on subsequent ones, and attaches the track
+        // to every other subscriber (which renegotiates over there)
+        let published = self
+            .room
+            .publish_track(self.conn_id, kind, codec, rid_.clone(), ssrc)
+            .await;
+        debug!(
+            "conn {}: published rid={rid_} ssrc={ssrc} ({} output(s))",
+            self.conn_id,
+            published.outputs.load().len()
         );
     }
 
@@ -105,11 +131,28 @@ impl PeerDriver {
                     self.conn_id,
                     last_rtp_age.as_millis()
                 );
+
+                // mirror at room level so other peers get the muted track_state
+                let kind = state.kind;
+                let published = self
+                    .room
+                    .tracks
+                    .get(&self.conn_id)
+                    .map(|ts| ts.iter().find(|t| t.kind == kind).map(Arc::clone))
+                    .unwrap_or_default();
+                if let Some(published) = published {
+                    self.room.set_track_active(&published, false).await;
+                }
             }
 
             if state.pli_wanted(now) && state.next_pli_at(now) <= now {
                 state.last_pli = Some(now);
-                if let Some(mut receiver) = self.publisher_pc.rtp_receiver(state.receiver_id) {
+                let receiver = if state.subscriber {
+                    self.subscriber_pc.rtp_receiver(state.receiver_id)
+                } else {
+                    self.publisher_pc.rtp_receiver(state.receiver_id)
+                };
+                if let Some(mut receiver) = receiver {
                     let plis: Vec<Box<dyn rtc::rtcp::Packet>> = state
                         .layers
                         .keys()

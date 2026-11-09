@@ -5,6 +5,7 @@ use crate::peer::{
     mux,
     worker::WorkerMessage,
 };
+use axum::extract::ws;
 use futures_util::stream::SelectAll;
 use rtc::{
     data_channel::RTCDataChannelInit,
@@ -13,7 +14,7 @@ use rtc::{
     peer_connection::{
         RTCPeerConnection, RTCPeerConnectionBuilder,
         configuration::{
-            RTCConfigurationBuilder, RTCIceServer, RTCRtcpMuxPolicy,
+            RTCConfigurationBuilder, RTCRtcpMuxPolicy,
             interceptor_registry::{Registry, register_default_interceptors},
             media_engine::MediaEngine,
             setting_engine::SettingEngineBuilder,
@@ -29,16 +30,28 @@ use std::{
     collections::HashMap,
     net::{IpAddr, SocketAddr},
     rc::Rc,
+    sync::Arc,
     time::Instant,
 };
 use tokio::sync::{mpsc, oneshot};
 use tracing::debug;
 use uuid::Uuid;
 
+use crate::sfu::room::RoomSfu;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PeerType {
     PUBLISHER,
     SUBSCRIBER,
+}
+
+impl From<PeerType> for String {
+    fn from(value: PeerType) -> Self {
+        match value {
+            PeerType::PUBLISHER => "PUBLISHER".to_string(),
+            PeerType::SUBSCRIBER => "SUBSCRIBER".to_string(),
+        }
+    }
 }
 
 pub enum PeerCommand {
@@ -199,15 +212,19 @@ pub(super) async fn handle_msg(job: WorkerMessage) {
             announce_ip,
             rx,
             conn_id,
+            room,
+            ws_sink,
         } => {
-            let peer = match build_peer(conn_id, announce_ip, rx).await {
+            let peer = match build_peer(conn_id, announce_ip, room, rx, ws_sink).await {
                 Ok(peer) => peer,
                 Err(e) => {
                     tracing::error!("create peer: {e}");
                     return;
                 }
             };
-            peer.run().await;
+            tokio::task::spawn_local(async move {
+                peer.run().await;
+            });
         }
     }
 }
@@ -215,7 +232,9 @@ pub(super) async fn handle_msg(job: WorkerMessage) {
 async fn build_peer(
     conn_id: Uuid,
     announce_ip: IpAddr,
+    room: Arc<RoomSfu>,
     rx: mpsc::Receiver<PeerCommand>,
+    ws_sink: mpsc::Sender<ws::Message>,
 ) -> Result<PeerDriver, String> {
     let mux = mux::current();
     let local_addr = SocketAddr::new(announce_ip, mux.port);
@@ -263,15 +282,13 @@ async fn build_peer(
         offer_outstanding: false,
         pending_renegotiation: false,
         closing: false,
+        room,
+        ws_sink,
     })
 }
 
 async fn create_pc(local_addr: SocketAddr) -> Result<RTCPeerConnection, String> {
     let config = RTCConfigurationBuilder::default()
-        .with_ice_servers(vec![RTCIceServer {
-            urls: vec!["stun:stun.l.google.com:19302".to_owned()],
-            ..Default::default()
-        }])
         .with_rtcp_mux_policy(RTCRtcpMuxPolicy::Require)
         .build();
 
@@ -317,31 +334,31 @@ async fn create_pc(local_addr: SocketAddr) -> Result<RTCPeerConnection, String> 
     pc.add_local_candidate(local_candidate)
         .map_err(|e| format!("add candidate: {e}"))?;
 
-    if let Some(srflx) = mux::current().srflx_addr {
-        let mux = mux::current();
+    // if let Some(srflx) = mux::current().srflx_addr {
+    //     let mux = mux::current();
 
-        let candidate = CandidateServerReflexiveConfig {
-            base_config: CandidateConfig {
-                network: "udp".to_owned(),
-                address: srflx.ip().to_string(),
-                port: srflx.port(),
-                component: 1,
-                ..Default::default()
-            },
-            rel_addr: local_addr.ip().to_string(),
-            rel_port: mux.port,
-            ..Default::default()
-        }
-        .new_candidate_server_reflexive()
-        .map_err(|e| format!("build srflx candidate: {e}"))?;
+    //     let candidate = CandidateServerReflexiveConfig {
+    //         base_config: CandidateConfig {
+    //             network: "udp".to_owned(),
+    //             address: srflx.ip().to_string(),
+    //             port: srflx.port(),
+    //             component: 1,
+    //             ..Default::default()
+    //         },
+    //         rel_addr: local_addr.ip().to_string(),
+    //         rel_port: mux.port,
+    //         ..Default::default()
+    //     }
+    //     .new_candidate_server_reflexive()
+    //     .map_err(|e| format!("build srflx candidate: {e}"))?;
 
-        let local_candidate = rtc::peer_connection::transport::RTCIceCandidate::from(&candidate)
-            .to_json()
-            .map_err(|e| format!("candidate json: {e}"))?;
+    //     let local_candidate = rtc::peer_connection::transport::RTCIceCandidate::from(&candidate)
+    //         .to_json()
+    //         .map_err(|e| format!("candidate json: {e}"))?;
 
-        pc.add_local_candidate(local_candidate)
-            .map_err(|e| format!("add srflx candidate: {e}"))?;
-    }
+    //     pc.add_local_candidate(local_candidate)
+    //         .map_err(|e| format!("add srflx candidate: {e}"))?;
+    // }
 
     pc.add_local_candidate(RTCIceCandidateInit::default())
         .map_err(|e| format!("gather complete: {e}"))?;
@@ -374,7 +391,7 @@ impl PeerDriver {
 
                 if let Ok(sdp) = &result {
                     self.reset_outbound_cache();
-                    self.bind_ufrag_from(sdp);
+                    self.bind_ufrag_from(sdp, pc_type);
                 }
                 let _ = resp.send(result);
             }
@@ -382,7 +399,7 @@ impl PeerDriver {
                 let result = (|| -> Result<(), String> {
                     let answer = RTCSessionDescription::answer(sdp)
                         .map_err(|e| format!("parse answer: {e}"))?;
-                    self.subscriber_pc
+                    self.publisher_pc
                         .set_remote_description(now, answer)
                         .map_err(|e| format!("remote answer desc: {e}"))?;
                     Ok(())
@@ -404,7 +421,11 @@ impl PeerDriver {
                     }
                 }
             }
-            PeerCommand::AddRemoteCandidate { init, resp, pc_type } => {
+            PeerCommand::AddRemoteCandidate {
+                init,
+                resp,
+                pc_type,
+            } => {
                 let pc = match pc_type {
                     PeerType::PUBLISHER => &mut self.publisher_pc,
                     PeerType::SUBSCRIBER => &mut self.subscriber_pc,
@@ -417,7 +438,7 @@ impl PeerDriver {
             PeerCommand::Attach { track, mime, resp } => {
                 let result = (|| -> Result<AttachedOutput, String> {
                     let sender_id = self
-                        .subscriber_pc
+                        .publisher_pc
                         .add_track(track)
                         .map_err(|e| format!("add track: {e}"))?;
                     let (tx, rx) = mpsc::channel(MEDIA_QUEUE_SIZE);
@@ -437,7 +458,7 @@ impl PeerDriver {
             PeerCommand::Detach { sender_id, resp } => {
                 self.outbound.remove(&sender_id);
                 let result = self
-                    .subscriber_pc
+                    .publisher_pc
                     .remove_track(sender_id)
                     .map_err(|e| format!("remove track: {e}"));
                 let _ = resp.send(result);

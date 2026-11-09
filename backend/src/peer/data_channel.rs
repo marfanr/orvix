@@ -1,8 +1,9 @@
-use crate::peer::constant::PLI_WINDOW;
+use crate::peer::constant::{FORWARD_RID, PLI_WINDOW};
 use crate::peer::driver::PeerDriver;
 use rtc::data_channel::RTCDataChannelMessage;
 use rtc::peer_connection::message::RTCMessage;
 use sonic_rs::{Deserialize, Serialize};
+use std::sync::Arc;
 use std::time::Instant;
 use tracing::{debug, error, info};
 use uuid::Uuid;
@@ -54,20 +55,44 @@ impl PeerDriver {
     pub(super) async fn handle_inbound_message(&mut self, now: Instant, message: RTCMessage) {
         match message {
             RTCMessage::RtpPacket(track_id, pkt) => {
-                let Some(t) = self.inbound.get_mut(&track_id) else {
-                    return;
-                };
-                t.last_rtp = now;
-                let _rid = t
-                    .layers
-                    .get(&pkt.header.ssrc)
-                    .cloned()
-                    .unwrap_or_else(|| "default".to_string());
+                let (kind, rid, resumed) = {
+                    let Some(t) = self.inbound.get_mut(&track_id) else {
+                        return;
+                    };
+                    t.last_rtp = now;
+                    let rid = t
+                        .layers
+                        .get(&pkt.header.ssrc)
+                        .cloned()
+                        .unwrap_or_else(|| "default".to_string());
 
-                if t.paused {
-                    t.paused = false;
-                    t.pli_until = now + PLI_WINDOW;
-                    info!("conn {}: track resumed", self.conn_id);
+                    let mut resumed = false;
+                    if t.paused {
+                        t.paused = false;
+                        t.pli_until = now + PLI_WINDOW;
+                        resumed = true;
+                        info!("conn {}: track resumed", self.conn_id);
+                    }
+                    (t.kind, rid, resumed)
+                };
+
+                // fan out only the forwarded layer; h/f layers stay inbound
+                if rid != FORWARD_RID {
+                    return;
+                }
+
+                // clone before awaiting so no DashMap guard is held across the await
+                let published = self
+                    .room
+                    .tracks
+                    .get(&self.conn_id)
+                    .map(|ts| ts.iter().find(|t| t.kind == kind).map(Arc::clone))
+                    .unwrap_or_default();
+                if let Some(published) = published {
+                    if resumed {
+                        self.room.set_track_active(&published, true).await;
+                    }
+                    published.forward(&pkt).await;
                 }
             }
             RTCMessage::RtcpPacket(_, _) => {

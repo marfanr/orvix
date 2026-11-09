@@ -236,7 +236,7 @@ export function useVideoCallRoom(getRoomParam: () => string | string[] | undefin
           }
           break
         }
-        // handle offer from server publisher
+        // handle offer from server subscriber
         case 'answer': {
           await webrtc.setRemoteAnswer(data.sdp)
           if (renegotiateQueued) await negotiate()

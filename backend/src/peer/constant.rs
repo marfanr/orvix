@@ -3,6 +3,16 @@ use std::time::Duration;
 pub const CONTROL_LABEL: &str = "control";
 pub const MESSAGE_LABEL: &str = "message";
 
+/// the simulcast layer that gets forwarded to subscribers; layers whose rid
+/// differs are demoted here (audio tracks without rid are normalized to this)
+pub const FORWARD_RID: &str = "q";
+
+/// send-only transceiver pool provisioned at peer build time so the first
+/// subscriber offer carries all m-lines and later attach() only needs
+/// replace_track (no renegotiation)
+pub const MAX_SEND_VIDEO: usize = 4;
+pub const MAX_SEND_AUDIO: usize = 3;
+
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(86400);
 /// per-subscriber RTP fan-out queue; dropping on overflow instead of backpressuring
 pub const MEDIA_QUEUE_SIZE: usize = 256;

@@ -1,10 +1,12 @@
 #![allow(dead_code)]
 
-use std::net::IpAddr;
+use std::{net::IpAddr, sync::Arc};
+use axum::extract::ws;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::peer::constant::PEER_QUEUE;
+use crate::sfu::room::RoomSfu;
 
 pub mod cmd;
 pub mod constant;
@@ -21,7 +23,7 @@ pub mod worker;
 pub use cmd::{PeerCommandInstance, PeerType};
 pub use driver::{AttachedOutput, OutboundTrack};
 
-pub fn create_peer(conn_id: Uuid, announce_ip: IpAddr) -> cmd::PeerCommandInstance {
+pub fn create_peer(conn_id: Uuid, announce_ip: IpAddr, room: Arc<RoomSfu>, ws_sink: mpsc::Sender<ws::Message>) -> Arc<cmd::PeerCommandInstance> {
     let (tx, rx) = mpsc::channel(PEER_QUEUE);
 
     let w = worker::worker_pool();
@@ -37,7 +39,9 @@ pub fn create_peer(conn_id: Uuid, announce_ip: IpAddr) -> cmd::PeerCommandInstan
             announce_ip,
             rx,
             conn_id,
+            room,
+            ws_sink
         });
 
-    cmd::PeerCommandInstance { tx }
+    Arc::new(cmd::PeerCommandInstance { tx })
 }

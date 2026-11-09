@@ -1,8 +1,6 @@
 use std::env;
 
 use crate::api::metrics::init_metrics;
-use crate::peer::create_peer;
-use crate::peer::worker::WorkerMessage;
 use crate::utils::resolve_announce_ip;
 use crate::{
     api::server::{ServerState, run_server},
