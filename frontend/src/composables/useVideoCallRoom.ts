@@ -11,6 +11,7 @@ import { useNotifySound } from '@/lib/audio'
 import { useLocalMedia } from './useLocalMedia'
 import { useSignaling } from './useSignaling'
 import { useWebRTC } from './useWebRTC'
+import { useMeetingConfigStore } from '@/stores/meetingConfig'
 
 export function useVideoCallRoom(getRoomParam: () => string | string[] | undefined) {
   const callStore = useCallStore()
@@ -24,8 +25,11 @@ export function useVideoCallRoom(getRoomParam: () => string | string[] | undefin
     remainingRequests,
     memberChangesData,
     newMessageData,
-    localRawStream,
+    outputStream,
   } = storeToRefs(callStore)
+
+  const meetConfigStore = useMeetingConfigStore()
+  const { form } = storeToRefs(meetConfigStore)
 
   const auth = useAuthStore()
   let participantSeq = 0
@@ -101,12 +105,7 @@ export function useVideoCallRoom(getRoomParam: () => string | string[] | undefin
     callStore.addNewMessage(msg, from)
   }
 
-  const webrtc = useWebRTC(
-    signaling.send,
-    onRemoteTrack,
-    handleControlChannel,
-    handleIncomingChat,
-  )
+  const webrtc = useWebRTC(signaling.send, onRemoteTrack, handleControlChannel, handleIncomingChat)
   const media = useLocalMedia(participants)
 
   const sendChat = (msg: string, target: string) => {
@@ -118,7 +117,7 @@ export function useVideoCallRoom(getRoomParam: () => string | string[] | undefin
   const muted = computed(() => media.getMe()?.muted ?? true)
 
   const outgoingStream = (): MediaStream | null => {
-    const out = localRawStream.value
+    const out = outputStream.value
     if (out && out.getVideoTracks().some((t) => t.readyState === 'live')) return out
     return media.getMe()?.stream ?? null
   }
@@ -137,6 +136,42 @@ export function useVideoCallRoom(getRoomParam: () => string | string[] | undefin
     const sdp = await webrtc.createOffer()
     if (sdp) signaling.sendOffer(sdp)
   }
+
+  let prev_codecs = form.value.preferredCodec
+  watch(
+    () => form.value.preferredCodec,
+    async (v) => {
+      if (v !== prev_codecs) {
+        console.log('code changed')
+        const pc = webrtc.peerCon.value
+        const sender = pc?.getSenders().find((s) => s.track?.kind == 'video')
+        if (!sender?.track) return
+
+        const stats = await sender?.getStats()
+
+        let mime: string | undefined
+        let codecId: string | undefined
+
+        stats.forEach((s) => {
+          if (s.type === 'outbound-rtp' && s.kind === 'video') {
+            codecId = s.codecId
+          }
+        })
+
+        if (codecId) {
+          const codec = stats.get(codecId)
+
+          if (codec?.type === 'codec') {
+            mime = codec.mimeType
+          }
+        }
+        console.log('mime ', mime, 'codec', codecId)
+
+        webrtc.sendDataControl(JSON.stringify({ type: 'codec_changed', codec: codecId, mime: mime }))
+        prev_codecs = v
+      }
+    },
+  )
 
   const onJoinedRoom = async (): Promise<void> => {
     const pc = webrtc.peerCon.value
@@ -168,7 +203,7 @@ export function useVideoCallRoom(getRoomParam: () => string | string[] | undefin
   }
 
   watch(
-    () => localRawStream.value,
+    () => outputStream.value,
     async () => {
       if (room.value.status !== 'joined') return // onJoinedRoom yang akan mengirim
       await syncOutgoing()
@@ -197,7 +232,6 @@ export function useVideoCallRoom(getRoomParam: () => string | string[] | undefin
         case 'join':
           if (data.accept) callStore.room.status = 'joined'
           else if (callStore.room.status !== 'joined') callStore.room.status = 'denied'
-          webrtc.sendDataControl('test')
           break
 
         // synchronize current members

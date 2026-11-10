@@ -34,7 +34,7 @@ pub struct RecordingHandle {
 pub struct PublishedTrack {
     pub publisher: Uuid,
     pub kind: RtpCodecKind,
-    pub codec: RTCRtpCodec,
+    pub codec: ArcSwap<RTCRtpCodec>,
     pub outputs: ArcSwap<Vec<Output>>,
     pub active: AtomicBool,
     recorder: ArcSwapOption<RecordingHandle>,
@@ -47,7 +47,7 @@ impl PublishedTrack {
         Self {
             publisher,
             kind,
-            codec,
+            codec: ArcSwap::from_pointee(codec),
             outputs: ArcSwap::from_pointee(Vec::new()),
             // A track only reaches this state after its first RTP packet arrived,
             // so the publisher is considered active until proven otherwise.
@@ -56,6 +56,11 @@ impl PublishedTrack {
             has_keyframe: AtomicBool::new(false),
             simulcast_layers: DashMap::new(),
         }
+    }
+
+    pub fn switch_codec(&self, codec: RTCRtpCodec) {
+        self.codec.store(Arc::new(codec));
+        self.has_keyframe.store(false, Ordering::Relaxed);
     }
 
     pub fn add_layer(&self, rid: String, ssrc: u32) {
@@ -102,6 +107,7 @@ impl PublishedTrack {
     /// so this only needs to carry kind + codec + one encoding with an SSRC.
     pub fn media_track(&self) -> MediaStreamTrack {
         let ssrc = Uuid::new_v4().as_u128() as u32;
+        let codec: RTCRtpCodec = self.codec.load_full().as_ref().clone();
         MediaStreamTrack::new(
             format!("stream-{}", self.publisher),
             format!("track-{}-{}", self.publisher, self.kind),
@@ -112,7 +118,7 @@ impl PublishedTrack {
                     ssrc: Some(ssrc),
                     ..Default::default()
                 },
-                codec: self.codec.clone(),
+                codec: codec,
                 ..Default::default()
             }],
         )

@@ -12,10 +12,13 @@ import AdvancedConfigSection from '@/components/video-call/config/sections/Advan
 
 import { useConfigPanel } from '@/composables/useConfigPanel.tsx'
 import { PopUpWidth } from '@/types/video-call.ts'
-import  { type MeetingConfigSectionKey, useMeetingConfigStore } from '@/stores/meetingConfig.ts'
+import { type MeetingConfigSectionKey, useMeetingConfigStore } from '@/stores/meetingConfig.ts'
+import { storeToRefs } from 'pinia'
 
 const { isOpen, close } = useConfigPanel()
-const { save } = useMeetingConfigStore()
+const meetingConfigStore = useMeetingConfigStore()
+const { save } = meetingConfigStore
+const { form } = storeToRefs(meetingConfigStore)
 
 const popupRef = ref<{ contentEl: HTMLElement | null } | null>(null)
 let trap: FocusTrap | null = null
@@ -52,6 +55,9 @@ const activeSection = ref<MeetingConfigSectionKey>('network')
 const currentSection = computed(
   () => sections.find((section) => section.key === activeSection.value) ?? sections[0],
 )
+watch(() => form.value, () => {
+  save()
+}, {deep: true})
 
 watch(
   isOpen,
@@ -108,25 +114,6 @@ onUnmounted(() => {
           </div>
         </section>
       </div>
-
-      <footer
-        class="flex shrink-0 items-center justify-end gap-x-2 border-t border-gray-200 px-4 py-3 sm:px-6"
-      >
-        <button
-          type="button"
-          class="rounded-lg px-3 py-2 text-sm font-medium text-gray-600 transition hover:bg-gray-100 hover:text-gray-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-          @click="close()"
-        >
-          Cancel
-        </button>
-        <button
-          type="button"
-          class="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white transition hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-          @click="save(); close()"
-        >
-          Save changes
-        </button>
-      </footer>
     </div>
   </PopUpComponent>
 </template>

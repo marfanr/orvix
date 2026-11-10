@@ -21,7 +21,6 @@ impl PeerDriver {
                         let Ok(json) = ev.candidate.to_json() else {
                             continue;
                         };
-                        debug!("conn {}: publisher ice candidate generated", self.conn_id);
                         _ = self
                             .ws_sink
                             .send(ws::Message::text(
@@ -43,17 +42,7 @@ impl PeerDriver {
                             self.conn_id, e
                         );
                     }
-                    RTCPeerConnectionEvent::OnIceConnectionStateChangeEvent(state) => {
-                        info!(
-                            "conn {}: publisher ice state change {}",
-                            self.conn_id, state
-                        );
-                    }
                     RTCPeerConnectionEvent::OnConnectionStateChangeEvent(state) => {
-                        info!(
-                            "conn {}: publisher connection state {}",
-                            self.conn_id, state
-                        );
                         if state == RTCPeerConnectionState::Failed
                             || state == RTCPeerConnectionState::Closed
                         {
@@ -99,7 +88,6 @@ impl PeerDriver {
                         let Ok(json) = ev.candidate.to_json() else {
                             continue;
                         };
-                        info!("conn {}: subscriber ice candidate generated", self.conn_id);
 
                         _ = self
                             .ws_sink
@@ -122,17 +110,8 @@ impl PeerDriver {
                             self.conn_id, e
                         );
                     }
-                    RTCPeerConnectionEvent::OnIceConnectionStateChangeEvent(state) => {
-                        info!(
-                            "conn {}: subscriber ice state change {}",
-                            self.conn_id, state
-                        );
-                    }
+
                     RTCPeerConnectionEvent::OnConnectionStateChangeEvent(state) => {
-                        info!(
-                            "conn {}: subscriber connection state {}",
-                            self.conn_id, state
-                        );
                         if state == RTCPeerConnectionState::Failed
                             || state == RTCPeerConnectionState::Closed
                         {

@@ -1,4 +1,5 @@
 use crate::peer::{
+    cmd::PeerCommand::SetOutboundCodec,
     constant::{CONTROL_LABEL, MEDIA_QUEUE_SIZE, MESSAGE_LABEL},
     driver::{AttachedOutput, MediaReceiver, OutboundTrack, PeerDriver},
     error::PeerError,
@@ -81,6 +82,10 @@ pub enum PeerCommand {
         sender_id: RTCRtpSenderId,
         resp: oneshot::Sender<Result<(), String>>,
     },
+    SetOutboundCodec {
+        sender_id: RTCRtpSenderId,
+        mime: String,
+    },
     SendControl(String),
     SendChat(String),
     Close,
@@ -92,6 +97,12 @@ pub struct PeerCommandInstance {
 }
 
 impl PeerCommandInstance {
+    pub async fn set_outbound_codec(&self, sender_id: RTCRtpSenderId, mime: String) {
+        _ = self
+            .tx
+            .send(PeerCommand::SetOutboundCodec { sender_id, mime })
+            .await;
+    }
     pub async fn answer_offer(&self, sdp: String, pc_type: PeerType) -> Result<String, String> {
         let (resp_tx, resp_rx) = oneshot::channel();
         self.tx
@@ -499,6 +510,12 @@ impl PeerDriver {
                     if let Err(e) = dc.send_text(now, json) {
                         debug!("conn {}: chat send: {e}", self.conn_id);
                     }
+                }
+            }
+            SetOutboundCodec { sender_id, mime } => {
+                if let Some(leg) = self.outbound.get_mut(&sender_id) {
+                    leg.mime = mime;
+                    leg.pt = None;
                 }
             }
         }

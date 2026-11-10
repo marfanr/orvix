@@ -202,7 +202,7 @@ impl RoomSfu {
         if t.is_output_exist(sub_id) {
             return false;
         }
-        let mime = t.codec.mime_type.clone();
+        let mime = t.codec.load().mime_type.clone();
 
         // instructs the subscriber's peer driver to add a send track and renegotiate
         // with the client; packets are thereafter fanned out via the returned queue

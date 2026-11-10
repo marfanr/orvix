@@ -6,6 +6,7 @@ use crate::peer::constant::{FORWARD_RID, PLI_WINDOW};
 use crate::peer::driver::PeerDriver;
 use rtc::data_channel::RTCDataChannelMessage;
 use rtc::peer_connection::message::RTCMessage;
+use rtc::rtp_transceiver::rtp_sender::{RTCRtpCodec, RtpCodecKind};
 use sonic_rs::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Instant;
@@ -16,6 +17,7 @@ use uuid::Uuid;
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ControlMessage {
     Record,
+    CodecChanged { codec: String, mime: String },
 }
 
 #[derive(Deserialize, Debug)]
@@ -33,20 +35,76 @@ pub struct DataMessageResponse {
     pub time: i64,
 }
 
-async fn handle_control_message(conn_id: Uuid, msg: RTCDataChannelMessage) {
-    let json = sonic_rs::from_slice::<ControlMessage>(&msg.data);
-    match json {
-        Ok(ControlMessage::Record) => {
-            info!("conn {conn_id}: received record control command via data channel");
-            // start_record_bot(room.clone()).await;
-        }
-        Err(e) => {
-            debug!("conn {conn_id}: control parse err: {e}");
+impl PeerDriver {
+    async fn handle_control_message(&mut self, conn_id: Uuid, msg: RTCDataChannelMessage) {
+        let json = sonic_rs::from_slice::<ControlMessage>(&msg.data);
+        match json {
+            Ok(ControlMessage::Record) => {
+                info!("conn {conn_id}: received record control command via data channel");
+                // start_record_bot(room.clone()).await;
+                // self.room.tracks.r
+            }
+            Ok(ControlMessage::CodecChanged { codec, mime }) => {
+                info!("codec changed into {}", codec);
+                // for now only handle video
+
+                let published = self
+                    .room
+                    .tracks
+                    .get(&self.conn_id)
+                    .map(|t| {
+                        t.iter()
+                            .find(|t| t.kind == RtpCodecKind::Video)
+                            .map(Arc::clone)
+                    })
+                    .unwrap_or_default();
+
+                let Some(track) = published else { return };
+
+                let new_codec = RTCRtpCodec {
+                    mime_type: mime.clone(),
+                    ..Default::default()
+                };
+
+                track.switch_codec(new_codec.clone());
+
+                for out in track.outputs.load_full().iter() {
+                    if let Some(peer) = self.room.peers.get(&out.sub) {
+                        let inst = peer.peer.clone();
+                        drop(peer);
+                        inst.set_outbound_codec(out.sender_id, mime.clone()).await;
+                    }
+                }
+
+                if let Some(state) = self
+                    .inbound
+                    .values_mut()
+                    .find(|t| t.kind == RtpCodecKind::Video)
+                {
+                    state.paused = false;
+                    state.pli_until = Instant::now() + PLI_WINDOW;
+                }
+
+                let layers: Vec<(String, u32)> = track
+                    .simulcast_layers
+                    .iter()
+                    .map(|t| (t.key().clone(), *t.value()))
+                    .collect();
+
+                self.room.unpublish_track(&track).await;
+
+                for (rid, ssrc) in layers {
+                    self.room
+                        .publish_track(conn_id, RtpCodecKind::Video, new_codec.clone(), rid, ssrc)
+                        .await;
+                }
+            }
+            Err(e) => {
+                debug!("conn {conn_id}: control parse err: {e}");
+            }
         }
     }
-}
 
-impl PeerDriver {
     pub(super) async fn handle_inbound_message(&mut self, now: Instant, message: RTCMessage) {
         match message {
             RTCMessage::RtpPacket(track_id, pkt) => {
@@ -95,8 +153,8 @@ impl PeerDriver {
             }
             RTCMessage::DataChannelMessage(channel_id, msg) => {
                 if channel_id == self.sub_ctrl_id {
-                    handle_control_message(self.conn_id, msg).await;
-                } else if channel_id == self.pub_msg_id {
+                    self.handle_control_message(self.conn_id, msg).await;
+                } else if channel_id == self.sub_msg_id {
                     self.handle_chat_message(self.conn_id, msg).await;
                 } else {
                     debug!(

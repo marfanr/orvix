@@ -3,17 +3,15 @@ use crate::sfu::room::RoomSfu;
 use crate::sfu::track::{PublishedTrack, RecordingHandle};
 use rtc::rtp::Packet;
 use rtc::rtp_transceiver::rtp_sender::RtpCodecKind;
+use rtc::shared::marshal::Marshal;
 use rtp::codecs::h264::H264Packet;
 use rtp::packetizer::Depacketizer;
 use sdp_types::{AddrType, Attribute, Media, MediaType, NetType, Origin, TransportProto};
-use std::fmt::Debug;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
-use rtc::shared::marshal::Marshal;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 use tokio::net::UdpSocket;
@@ -76,12 +74,11 @@ pub async fn start_track_recording(room_id: Uuid, track: &Arc<PublishedTrack>) -
         return false;
     }
 
-    if track.kind != RtpCodecKind::Video
-        || !track.codec.mime_type.eq_ignore_ascii_case("video/H264")
-    {
+    let codec = track.codec.load();
+    if track.kind != RtpCodecKind::Video || !codec.mime_type.eq_ignore_ascii_case("video/H264") {
         info!(
             "skip recording publisher {}: codec={}, kind={}",
-            track.publisher, track.codec.mime_type, track.kind
+            track.publisher, codec.mime_type, track.kind
         );
         return false;
     }
@@ -160,7 +157,6 @@ pub async fn start_track_recording(room_id: Uuid, track: &Arc<PublishedTrack>) -
         let res = run_recorder(rx, sock, stdin, child, tee, output.clone()).await;
 
         // TODO compositing
-
 
         // Recorder is gone: detach it so the track can be recorded again and
         // the hot path stops pushing into a dead channel.
@@ -351,7 +347,6 @@ fn backoff_for(attempt: u32, base: Duration) -> Duration {
     let multiplier = 1u32 << attempt.saturating_sub(1).min(5);
     base.saturating_mul(multiplier).min(Duration::from_secs(5))
 }
-
 
 async fn create_tee(dir: PathBuf, name: String) -> Result<File, String> {
     tokio::fs::create_dir_all(&dir)

@@ -52,7 +52,8 @@ export function useWebRTC(
   const localTracksTranceiver = ref<RTCRtpTransceiver | null>(null)
 
   const localTracksAudio = ref<RTCRtpSender | null>(null)
-  const controlChannel = ref<RTCDataChannel | null>(null)
+  const controlChannelSub = ref<RTCDataChannel | null>(null)
+  const controlChannelPub = ref<RTCDataChannel | null>(null)
   const chatChannelPub = ref<RTCDataChannel | null>(null)
   const chatChannelSub = ref<RTCDataChannel | null>(null)
 
@@ -93,23 +94,12 @@ export function useWebRTC(
     PublisherPeerCon.value = pub_pc
     SubscriberPeerCon.value = sub_pc
 
-    controlChannel.value ??= sub_pc.createDataChannel('control', { id: 0, negotiated: true })
+    controlChannelSub.value ??= sub_pc.createDataChannel('control', { id: 0, negotiated: true })
+    controlChannelPub.value ??= pub_pc.createDataChannel('control', { id: 0, negotiated: true })
     chatChannelPub.value ??= pub_pc.createDataChannel('chat', { id: 1, negotiated: true })
     chatChannelSub.value ??= sub_pc.createDataChannel('chat', { id: 1, negotiated: true })
 
-    controlChannel.value.onopen = () => {
-      while (pendingMessageControlCh.length > 0 && controlChannel.value?.readyState === 'open') {
-        const msg = pendingMessageControlCh[0]
-
-        try {
-          _sendDataControl(msg!)
-          pendingMessageControlCh.shift()
-        } catch {
-          break
-        }
-      }
-    }
-    controlChannel.value.onmessage = (msg) => {
+    controlChannelSub.value.onmessage = (msg) => {
       debug('received control message')
       handleControl?.(msg)
     }
@@ -339,21 +329,11 @@ export function useWebRTC(
     }
   }
 
-  const _sendDataControl = <T extends DataControlType>(msg: T): void => {
-    const channel = controlChannel.value!
+  const sendDataControl = <T extends DataControlType>(msg: T): void => {
+    const channel = controlChannelPub.value!
     if (typeof msg === 'string') channel.send(msg)
     else if (msg instanceof Blob) channel.send(msg)
     else channel.send(msg)
-  }
-
-  const sendDataControl = <T extends DataControlType>(msg: T): void => {
-    const channel = controlChannel.value
-    if (!channel || channel.readyState !== 'open') {
-      pendingMessageControlCh.push(msg)
-      return
-    }
-
-    _sendDataControl(msg)
   }
 
   const sendChat = <T extends DataControlType>(msg: T): void => {
@@ -364,7 +344,7 @@ export function useWebRTC(
   }
 
   const close = () => {
-    controlChannel.value?.close()
+    controlChannelSub.value?.close()
     chatChannelPub.value?.close()
     chatChannelSub.value?.close()
     PublisherPeerCon.value?.close()
@@ -372,7 +352,7 @@ export function useWebRTC(
 
     PublisherPeerCon.value = null
     SubscriberPeerCon.value = null
-    controlChannel.value = null
+    controlChannelSub.value = null
     chatChannelPub.value = null
     chatChannelSub.value = null
 

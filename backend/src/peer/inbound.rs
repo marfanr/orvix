@@ -58,7 +58,7 @@ impl PeerDriver {
                 return;
             };
 
-            debug!(
+            info!(
                 "conn {}: inbound track kind={} ssrc={ssrc} codec={}",
                 self.conn_id, kind, codec.mime_type
             );
@@ -101,7 +101,7 @@ impl PeerDriver {
             .room
             .publish_track(self.conn_id, kind, codec, rid_.clone(), ssrc)
             .await;
-        debug!(
+        info!(
             "conn {}: published rid={rid_} ssrc={ssrc} ({} output(s))",
             self.conn_id,
             published.outputs.load().len()
