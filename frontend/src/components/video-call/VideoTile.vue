@@ -88,8 +88,8 @@ async function setVideoStream(): Promise<void> {
 
 async function setAudioStream(): Promise<void> {
   await nextTick()
-  const { stream, muted } = props.participant
-  if (!audioRef.value || !stream) return
+  const { stream, muted, id } = props.participant
+  if (!audioRef.value || !stream || id == 0) return
 
   audioRef.value.muted = muted
   attachStream(audioRef.value, stream)

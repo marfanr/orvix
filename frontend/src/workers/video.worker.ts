@@ -5,25 +5,30 @@
 
 import { FilesetResolver, ImageSegmenter } from '@mediapipe/tasks-vision'
 import type { Background } from '@/types/video-call.ts'
-import {
-  drawBlurred,
-  drawCover,
-  writeSmoothedMask,
-} from '@/lib/filter.ts'
+import { drawBlurred, drawCover, writeSmoothedMask } from '@/lib/filter.ts'
+
+type Src = VideoFrame | ImageBitmap
 
 type InMsg =
   | {
       func: 'start_worker'
       background: Background
       enabled: boolean
-      writable: WritableStream<VideoFrame>
+      canvas?: OffscreenCanvas
+      writable?: WritableStream<VideoFrame>
       mirrored: boolean
     }
   | { func: 'set_source'; readable: ReadableStream<VideoFrame> }
+  | { func: 'frame'; bitmap: ImageBitmap }
+  | { func: 'ticker'; on: boolean; fps: number }
   | { func: 'set_background'; background: Background; enabled: boolean; mirrored: boolean }
   | { func: 'stop_worker' }
 
-type OutMsg = { func: 'published' } | { func: 'mask_ready' }
+type OutMsg =
+  | { func: 'published' }
+  | { func: 'mask_ready' }
+  | { func: 'frame_done' }
+  | { func: 'tick' }
 
 const post = (m: OutMsg) => self.postMessage(m)
 
@@ -41,17 +46,18 @@ const maskCanvas = new OffscreenCanvas(1, 1)
 const maskCtx = maskCanvas.getContext('2d')!
 const blurCanvas = new OffscreenCanvas(1, 1)
 const blurCtx = blurCanvas.getContext('2d', { alpha: false })!
-const outCanvas = new OffscreenCanvas(1, 1)
-const outCtx = outCanvas.getContext('2d')!
 
-let writable: WritableStream<VideoFrame> | null = null
+let outCanvas: OffscreenCanvas | null = null
+let outCtx: OffscreenCanvasRenderingContext2D | null = null
+let writer: WritableStreamDefaultWriter<VideoFrame> | null = null
+
 let pipeAbort: AbortController | null = null
+let tickId: ReturnType<typeof setInterval> | null = null
 let background: Background = { type: 'blur', radius: 10 }
 let enabled = true
 let mirrored = false
 
 let segmenter: ImageSegmenter | null = null
-let useFallbackBlur = false
 let maskImage: ImageData | null = null
 let mask32: Uint32Array | null = null
 let lastRun = 0
@@ -65,11 +71,44 @@ let t0 = 0
 
 const since = () => Math.round(performance.now() - t0)
 
+const dims = (s: Src): [number, number] =>
+  'displayWidth' in s ? [s.displayWidth, s.displayHeight] : [s.width, s.height]
+
 function logThrottled(label: string, e: unknown): void {
   const t = performance.now()
   if (t - lastErrLog < 2000) return
   lastErrLog = t
   console.error(`[video.worker] ${label}`, e)
+}
+
+function setTicker(on: boolean, fps: number): void {
+  if (tickId !== null) {
+    clearInterval(tickId)
+    tickId = null
+  }
+  if (on) tickId = setInterval(() => post({ func: 'tick' }), 1000 / fps)
+}
+
+function setupSink(msg: Extract<InMsg, { func: 'start_worker' }>): void {
+  outCanvas = msg.canvas ?? new OffscreenCanvas(1, 1)
+  outCtx = outCanvas.getContext('2d')!
+
+  if (msg.writable) {
+    writer = msg.writable.getWriter()
+    return
+  }
+
+  const VTG = (self as any).VideoTrackGenerator
+  if (typeof VTG === 'function') {
+    try {
+      const gen = new VTG()
+      writer = gen.writable.getWriter()
+      self.postMessage({ func: 'track', track: gen.track }, [gen.track])
+    } catch (e) {
+      writer = null
+      console.warn('[video.worker] VideoTrackGenerator unavailable', e)
+    }
+  }
 }
 
 self.onmessage = (e: MessageEvent<InMsg>) => {
@@ -78,7 +117,7 @@ self.onmessage = (e: MessageEvent<InMsg>) => {
 
   switch (msg.func) {
     case 'start_worker':
-      writable = msg.writable
+      setupSink(msg)
       background = msg.background
       enabled = msg.enabled
       mirrored = msg.mirrored
@@ -86,6 +125,12 @@ self.onmessage = (e: MessageEvent<InMsg>) => {
       break
     case 'set_source':
       attachSource(msg.readable)
+      break
+    case 'frame':
+      void renderBitmap(msg.bitmap)
+      break
+    case 'ticker':
+      setTicker(msg.on, msg.fps)
       break
     case 'set_background':
       background = msg.background
@@ -142,9 +187,7 @@ function warmUp(instance: ImageSegmenter): void {
 }
 
 async function initSegmenter(): Promise<void> {
-  // loaded parallel
   const [vision, modelBuf] = await Promise.all([resolveVision(), fetchModel()])
-  // console.log(`[video.worker] assets ready +${since()}ms`)
 
   let instance: ImageSegmenter | null = null
   let lastError: unknown = null
@@ -157,8 +200,6 @@ async function initSegmenter(): Promise<void> {
         outputCategoryMask: true,
         outputConfidenceMasks: false,
       })
-      // console.log(`[video.worker] segmenter delegate: ${delegate} +${since()}ms`)
-      useFallbackBlur = false
       break
     } catch (e) {
       lastError = e
@@ -174,24 +215,22 @@ async function initSegmenter(): Promise<void> {
   if (!instance) {
     console.error('[video.worker] segmenter init failed on all delegates', lastError)
     segmenter = null
-    useFallbackBlur = true
     return
   }
 
   warmUp(instance)
   segmenter = instance
-  // console.log(`[video.worker] warm-up done +${since()}ms`)
 }
 
-function drawSegmenterInput(frame: VideoFrame): void {
+function drawSegmenterInput(src: Src, srcW: number, srcH: number): void {
   const width = SEGMENT_WIDTH
-  const height = Math.max(1, Math.round((SEGMENT_WIDTH * frame.displayHeight) / frame.displayWidth))
+  const height = Math.max(1, Math.round((SEGMENT_WIDTH * srcH) / srcW))
 
   if (inputCanvas.width !== width || inputCanvas.height !== height) {
     inputCanvas.width = width
     inputCanvas.height = height
   }
-  inputCtx.drawImage(frame, 0, 0, width, height)
+  inputCtx.drawImage(src, 0, 0, width, height)
 }
 
 function updateMaskCanvas(labels: Uint8Array, width: number, height: number): void {
@@ -206,8 +245,8 @@ function updateMaskCanvas(labels: Uint8Array, width: number, height: number): vo
   maskCtx.putImageData(maskImage, 0, 0)
 }
 
-function segment(frame: VideoFrame): void {
-  drawSegmenterInput(frame)
+function segment(src: Src, w: number, h: number): void {
+  drawSegmenterInput(src, w, h)
 
   segmenter!.segmentForVideo(inputCanvas, performance.now(), (result) => {
     const mask = result.categoryMask
@@ -218,32 +257,34 @@ function segment(frame: VideoFrame): void {
   })
 }
 
-function drawBackground(frame: VideoFrame, w: number, h: number): void {
+function drawBackground(src: Src, w: number, h: number): void {
+  const ctx = outCtx!
   const bg = background
   switch (bg.type) {
     case 'blur':
-      drawBlurred(outCtx, blurCtx, blurCanvas, frame, w, h, bg.radius)
+      drawBlurred(ctx, blurCtx, blurCanvas, src, w, h, bg.radius)
       break
     case 'image':
-      outCtx.save()
-      outCtx.setTransform(1, 0, 0, 1, 0, 0)
-      drawCover(outCtx, bg.image as ImageBitmap, w, h)
-      outCtx.restore()
+      ctx.save()
+      ctx.setTransform(1, 0, 0, 1, 0, 0)
+      drawCover(ctx, bg.image as ImageBitmap, w, h)
+      ctx.restore()
       break
     case 'color':
-      outCtx.fillStyle = bg.value
-      outCtx.fillRect(0, 0, w, h)
+      ctx.fillStyle = bg.value
+      ctx.fillRect(0, 0, w, h)
       break
   }
 }
 
 function prepareCanvas(w: number, h: number): void {
-  if (outCanvas.width !== w || outCanvas.height !== h) {
-    outCanvas.width = w
-    outCanvas.height = h
+  const canvas = outCanvas!
+  if (canvas.width !== w || canvas.height !== h) {
+    canvas.width = w
+    canvas.height = h
   }
-  outCtx.imageSmoothingEnabled = true
-  outCtx.imageSmoothingQuality = 'high'
+  outCtx!.imageSmoothingEnabled = true
+  outCtx!.imageSmoothingQuality = 'high'
 }
 
 function markMaskReady(): void {
@@ -259,68 +300,76 @@ function markPublished(): void {
   post({ func: 'published' })
 }
 
-function composite(frame: VideoFrame, w: number, h: number): void {
+function composite(src: Src, w: number, h: number): void {
   prepareCanvas(w, h)
-  const ctx = outCtx
+  const ctx = outCtx!
 
   ctx.globalCompositeOperation = 'source-over'
   ctx.clearRect(0, 0, w, h)
-  ctx.drawImage(frame, 0, 0, w, h)
+  ctx.drawImage(src, 0, 0, w, h)
 
   ctx.globalCompositeOperation = 'destination-in'
   ctx.drawImage(maskCanvas, 0, 0, w, h)
 
   ctx.globalCompositeOperation = 'destination-over'
-  drawBackground(frame, w, h)
+  drawBackground(src, w, h)
 
   ctx.globalCompositeOperation = 'source-over'
 
   markMaskReady()
 }
 
-function fallbackComposite(frame: VideoFrame, w: number, h: number): void {
+function fallbackComposite(src: Src, w: number, h: number): void {
   prepareCanvas(w, h)
-  const ctx = outCtx
+  const ctx = outCtx!
 
   ctx.globalCompositeOperation = 'source-over'
   ctx.clearRect(0, 0, w, h)
 
   switch (background.type) {
     case 'blur':
-      drawBlurred(ctx, blurCtx, blurCanvas, frame, w, h, background.radius)
+      drawBlurred(ctx, blurCtx, blurCanvas, src, w, h, background.radius)
       break
     case 'color':
       ctx.fillStyle = background.value
       ctx.fillRect(0, 0, w, h)
       break
     default:
-      ctx.drawImage(frame, 0, 0, w, h)
+      ctx.drawImage(src, 0, 0, w, h)
   }
 }
 
-function mirrorOnly(frame: VideoFrame, w: number, h: number): void {
+function passthrough(src: Src, w: number, h: number): void {
   prepareCanvas(w, h)
-  outCtx.globalCompositeOperation = 'source-over'
-  outCtx.setTransform(-1, 0, 0, 1, w, 0)
-  outCtx.drawImage(frame, 0, 0, w, h)
-  outCtx.setTransform(1, 0, 0, 1, 0, 0)
+  outCtx!.globalCompositeOperation = 'source-over'
+  outCtx!.drawImage(src, 0, 0, w, h)
 }
 
-function render(frame: VideoFrame): VideoFrame | null {
-  const w = frame.displayWidth
-  const h = frame.displayHeight
-  if (!w || !h) return null
+function mirrorOnly(src: Src, w: number, h: number): void {
+  prepareCanvas(w, h)
+  const ctx = outCtx!
+  ctx.globalCompositeOperation = 'source-over'
+  ctx.setTransform(-1, 0, 0, 1, w, 0)
+  ctx.drawImage(src, 0, 0, w, h)
+  ctx.setTransform(1, 0, 0, 1, 0, 0)
+}
+
+function render(src: Src): boolean {
+  const [w, h] = dims(src)
+  if (!w || !h || !outCtx) return false
 
   prepareCanvas(w, h)
 
   if (!enabled) {
-    mirrorOnly(frame, w, h)
+    if (mirrored) mirrorOnly(src, w, h)
+    else passthrough(src, w, h)
+    markMaskReady()
   } else {
     const now = performance.now()
     if (segmenter && now - lastRun >= SEGMENT_INTERVAL) {
       lastRun = now
       try {
-        segment(frame)
+        segment(src, w, h)
       } catch (e) {
         logThrottled('segment failed', e)
       }
@@ -328,45 +377,54 @@ function render(frame: VideoFrame): VideoFrame | null {
 
     if (mirrored) outCtx.setTransform(-1, 0, 0, 1, w, 0)
     try {
-      if (maskReady && segmenter) composite(frame, w, h)
-      else fallbackComposite(frame, w, h)
+      if (maskReady && segmenter) composite(src, w, h)
+      else fallbackComposite(src, w, h)
     } finally {
       outCtx.setTransform(1, 0, 0, 1, 0, 0)
     }
   }
 
-  return new VideoFrame(outCanvas, {
-    timestamp: frame.timestamp,
-    duration: frame.duration ?? undefined,
-  })
+  markPublished()
+  return true
 }
 
-function makeTransform(): TransformStream<VideoFrame, VideoFrame> {
-  return new TransformStream<VideoFrame, VideoFrame>({
-    transform(frame, controller) {
+function safeRender(src: Src): boolean {
+  if (disposed) return false
+  try {
+    return render(src)
+  } catch (e) {
+    logThrottled('render failed', e)
+    if (initDone || !enabled) {
       try {
-        if (disposed) return
+        const [w, h] = dims(src)
+        passthrough(src, w, h)
+        return true
+      } catch {}
+    }
+    return false
+  }
+}
 
-        if (!enabled && !mirrored) {
-          controller.enqueue(frame.clone())
-          markMaskReady()
-          markPublished()
-          return
-        }
+async function emit(timestamp: number, duration?: number | null): Promise<void> {
+  if (!writer || !outCanvas || disposed) return
 
-        const out = render(frame)
-        if (!out) return
-        controller.enqueue(out)
+  let vf: VideoFrame | null = null
+  try {
+    vf = new VideoFrame(outCanvas, { timestamp, duration: duration ?? undefined })
+    await writer.write(vf)
+  } catch (e) {
+    try {
+      vf?.close()
+    } catch {}
+    logThrottled('emit failed', e)
+  }
+}
 
-        if (!enabled) markMaskReady()
-        markPublished()
-      } catch (e) {
-        logThrottled('render failed', e)
-        if (initDone || !enabled) {
-          try {
-            controller.enqueue(frame.clone())
-          } catch {}
-        }
+function makeSink(): WritableStream<VideoFrame> {
+  return new WritableStream<VideoFrame>({
+    async write(frame) {
+      try {
+        if (safeRender(frame)) await emit(frame.timestamp, frame.duration)
       } finally {
         frame.close()
       }
@@ -375,7 +433,7 @@ function makeTransform(): TransformStream<VideoFrame, VideoFrame> {
 }
 
 function attachSource(readable: ReadableStream<VideoFrame>): void {
-  if (disposed || !writable) {
+  if (disposed || !outCtx) {
     readable.cancel().catch(() => {})
     return
   }
@@ -384,13 +442,18 @@ function attachSource(readable: ReadableStream<VideoFrame>): void {
   const ac = new AbortController()
   pipeAbort = ac
 
-  // preventClose/preventAbort
-  readable
-    .pipeThrough(makeTransform(), { signal: ac.signal })
-    .pipeTo(writable, { preventClose: true, preventAbort: true })
-    .catch((e: unknown) => {
-      if (!ac.signal.aborted) logThrottled('pipeline error', e)
-    })
+  readable.pipeTo(makeSink(), { signal: ac.signal }).catch((e: unknown) => {
+    if (!ac.signal.aborted) logThrottled('pipeline error', e)
+  })
+}
+
+async function renderBitmap(bmp: ImageBitmap): Promise<void> {
+  try {
+    if (safeRender(bmp)) await emit(Math.round(performance.now() * 1000))
+  } finally {
+    bmp.close()
+    post({ func: 'frame_done' })
+  }
 }
 
 function startWorker(): void {
@@ -400,18 +463,19 @@ function startWorker(): void {
     .catch((e: unknown) => {
       console.error('segmenter init error:', e)
       segmenter = null
-      useFallbackBlur = true
     })
     .finally(() => {
       initDone = true
-      if (disposed) return
     })
 }
 
 function stopWorker(): void {
+  setTicker(false, 0)
   disposed = true
   pipeAbort?.abort()
   segmenter?.close()
   segmenter = null
+  writer?.close().catch(() => {})
+  writer = null
   self.close()
 }

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Mohammad Arfan
+//
+// SPDX-License-Identifier: AGPL-3.0
+
 <script setup lang="ts">
 import { ChevronDownIcon, CircleHelpIcon } from 'lucide-vue-next'
 import { computed, ref } from 'vue'

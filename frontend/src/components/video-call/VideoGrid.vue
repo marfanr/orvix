@@ -1,6 +1,4 @@
-// SPDX-FileCopyrightText: 2026 Mohammad Arfan
-//
-// SPDX-License-Identifier: AGPL-3.0
+// SPDX-FileCopyrightText: 2026 Mohammad Arfan // // SPDX-License-Identifier: AGPL-3.0
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
@@ -8,6 +6,7 @@ import { ViewLayoutMode, type Participant } from '@/types/video-call'
 import VideoTile from './VideoTile.vue'
 import { useCallStore } from '@/stores/call.ts'
 import { storeToRefs } from 'pinia'
+import { watch } from 'vue'
 
 const store = useCallStore()
 const { viewLayout } = storeToRefs(store)
@@ -73,7 +72,7 @@ const layout = computed(() => {
   return { width: w, height: h, rowWidth: w * cols + g * (cols - 1) }
 })
 
-// speaker mode: peserta yang di-pin tampil di stage, sisanya di sidebar
+// for speaker mode
 const pinnedId = ref<Participant['id'] | null>(null)
 
 const stageParticipant = computed(
@@ -87,6 +86,46 @@ const sideParticipants = computed(() =>
 function pin(id: Participant['id']) {
   pinnedId.value = id
 }
+
+
+// TODO: will be moved to another place
+const audioContext = new AudioContext()
+
+const getAudioLevel = (analyzer: AnalyserNode) => {
+  const data = new Float32Array(analyzer.fftSize)
+  analyzer.getFloatTimeDomainData(data)
+  let sum = 0
+  for (const d of data) {
+    sum += d*d
+  }
+  let res = Math.sqrt(sum / data.length)
+  console.log("audio level: ", res)
+}
+
+const handleAudio = (stream: MediaStream) => {
+  const audio_stream = stream.getAudioTracks()
+  if (audio_stream.length < 1) return
+
+  const audioStream = new MediaStream(audio_stream)
+  const source = audioContext.createMediaStreamSource(audioStream)
+  const analyzer = audioContext.createAnalyser()
+  analyzer.fftSize = 512
+  analyzer.smoothingTimeConstant = 0.4
+
+  getAudioLevel(analyzer)
+  source.connect(analyzer)
+}
+
+watch(
+  () => props.participants,
+  (paticipants) => {
+    for (const p of paticipants) {
+      if (!p.stream || p.muted) continue
+      handleAudio(p.stream)
+    }
+  },
+  { deep: true },
+)
 
 onMounted(() => {
   const el = gridRef.value
@@ -110,28 +149,43 @@ const isShowSpeaker = computed(() => viewLayout.value === ViewLayoutMode.Speaker
 </script>
 
 <template>
-  <main ref="gridRef" class="w-full h-full min-h-0 overflow-x-hidden"
-    :class="isShowSpeaker ? 'overflow-y-hidden p-2' : 'overflow-y-auto p-2 sm:p-4'">
+  <main
+    ref="gridRef"
+    class="w-full h-full min-h-0 overflow-x-hidden"
+    :class="isShowSpeaker ? 'overflow-y-hidden p-2' : 'overflow-y-auto p-2 sm:p-4'"
+  >
     <!-- grid mode -->
     <div v-if="isShowGrid" class="flex h-full w-full items-center justify-center">
-      <div v-if="layout.width > 0" class="flex flex-wrap justify-center"
-        :style="{ width: `${layout.rowWidth}px`, gap: `${gap}px` }">
-        <div v-for="p in participants" :key="p.id" class="shrink-0"
-          :style="{ width: `${layout.width}px`, height: `${layout.height}px` }">
+      <div
+        v-if="layout.width > 0"
+        class="flex flex-wrap justify-center"
+        :style="{ width: `${layout.rowWidth}px`, gap: `${gap}px` }"
+      >
+        <div
+          v-for="p in participants"
+          :key="p.id"
+          class="shrink-0"
+          :style="{ width: `${layout.width}px`, height: `${layout.height}px` }"
+        >
           <VideoTile :participant="p" tile-class="w-full h-full rounded-sm" />
         </div>
       </div>
     </div>
 
-    <!-- speaker mode: filmstrip di atas, stage besar di bawah -->
+    <!-- speaker mode -->
     <div v-else-if="isShowSpeaker" class="flex h-full w-full min-h-0 flex-col gap-2">
-      <!-- filmstrip member lain -->
-      <div v-if="sideParticipants.length > 0"
-        class="flex h-20 sm:h-24 shrink-0 flex-row gap-2 overflow-x-auto overflow-y-hidden [scrollbar-width:thin]">
-        <button v-for="p in sideParticipants" :key="p.id" type="button"
-          class="relative h-full aspect-video shrink-0 cursor-pointer overflow-hidden rounded-xl bg-stone-900 outline-none
-                 ring-2 ring-transparent transition duration-150
-                 hover:ring-stone-400 focus-visible:ring-stone-500" @click="pin(p.id)">
+      <!-- filmstrip -->
+      <div
+        v-if="sideParticipants.length > 0"
+        class="flex h-20 sm:h-24 shrink-0 flex-row gap-2 overflow-x-auto overflow-y-hidden [scrollbar-width:thin]"
+      >
+        <button
+          v-for="p in sideParticipants"
+          :key="p.id"
+          type="button"
+          class="relative h-full aspect-video shrink-0 cursor-pointer overflow-hidden rounded-xl bg-stone-900 outline-none ring-2 ring-transparent transition duration-150 hover:ring-stone-400 focus-visible:ring-stone-500"
+          @click="pin(p.id)"
+        >
           <VideoTile :participant="p" tile-class="w-full h-full" />
         </button>
       </div>
@@ -139,8 +193,12 @@ const isShowSpeaker = computed(() => viewLayout.value === ViewLayoutMode.Speaker
       <!-- stage -->
       <div class="relative flex grow min-h-0 min-w-0 items-stretch justify-center">
         <div class="relative aspect-video max-w-full overflow-hidden rounded-xl bg-stone-900">
-          <VideoTile v-if="stageParticipant" :key="stageParticipant.id" :participant="stageParticipant"
-            tile-class="w-full h-full" />
+          <VideoTile
+            v-if="stageParticipant"
+            :key="stageParticipant.id"
+            :participant="stageParticipant"
+            tile-class="w-full h-full"
+          />
         </div>
       </div>
     </div>
