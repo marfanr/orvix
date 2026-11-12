@@ -31,7 +31,7 @@ export const useCallStore = defineStore('call', () => {
     title: 'Untitled room',
   })
 
-  const localRawStream = ref<MediaStream | null>(null)
+  const outputStream = ref<MediaStream | null>(null)
 
   const participants = ref<Participant[]>([
     {
@@ -175,7 +175,7 @@ export const useCallStore = defineStore('call', () => {
     isChatOpen,
     toggleChat,
     closeChat,
-    localRawStream,
+    outputStream,
     viewLayout,
   }
 })

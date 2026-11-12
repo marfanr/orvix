@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 Mohammad Arfan
+
+SPDX-License-Identifier: AGPL-3.0
+-->
+
 <script setup lang="ts">
 import type { Background, Participant } from '@/types/video-call.ts'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
@@ -273,6 +279,7 @@ function handleWorkerMessage(e: MessageEvent<{ func: string; track?: MediaStream
       break
 
     case 'published': {
+      console.log("published")
       const s = outputStream()
       if (s) emits('stream', s)
       break

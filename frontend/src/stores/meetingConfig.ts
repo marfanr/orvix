@@ -8,7 +8,7 @@ export type BgRemovalKey = 'disabled' | 'blur' | 'image' | 'color'
 
 export type MeetingConfigToggleKey =
   | 'adaptiveBitrate'
-  | 'simulcast'
+  | 'svc'
   | 'mirrorPreview'
   | 'lowLightMode'
   | 'noiseSuppression'
@@ -28,10 +28,9 @@ export interface MeetingConfigToggleItem {
 
 export interface MeetingConfigForm {
   maxBitrate: SupportedBitrate
-  preferredCodec: SupportedVideoCodec
   iceTransport: string
   adaptiveBitrate: boolean
-  simulcast: boolean
+  svc: boolean
   camera: string
   resolution: string
   framerate: string
@@ -66,10 +65,9 @@ export interface MeetingConfigForm {
 
 export const MEETING_CONFIG_DEFAULTS: MeetingConfigForm = {
   maxBitrate: SupportedBitrate.B1,
-  preferredCodec: SupportedVideoCodec.VP9,
   iceTransport: 'all',
   adaptiveBitrate: true,
-  simulcast: true,
+  svc: true,
   camera: '',
   resolution: '720p',
   framerate: '30',

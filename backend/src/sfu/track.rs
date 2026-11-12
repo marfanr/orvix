@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: AGPL-3.0
 
+use crate::sfu::room_peer::RoomPeer;
+use crate::sfu::svc::{LayerSelector, Verdict, parse_vp9};
 use crate::utils::describe_nal;
 use arc_swap::{ArcSwap, ArcSwapOption};
 use dashmap::DashMap;
@@ -14,7 +16,7 @@ use rtc::rtp_transceiver::rtp_sender::{
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::mpsc;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 /// One subscriber leg of a published track. `sender_id` refers to the `RTCRtpSender`
@@ -25,6 +27,7 @@ pub struct Output {
     pub sub: Uuid,
     pub sender_id: RTCRtpSenderId,
     pub tx: mpsc::Sender<Packet>,
+    pub svc: Arc<LayerSelector>,
 }
 
 pub struct RecordingHandle {
@@ -34,20 +37,28 @@ pub struct RecordingHandle {
 pub struct PublishedTrack {
     pub publisher: Uuid,
     pub kind: RtpCodecKind,
-    pub codec: RTCRtpCodec,
+    pub codec: ArcSwap<RTCRtpCodec>,
     pub outputs: ArcSwap<Vec<Output>>,
     pub active: AtomicBool,
     recorder: ArcSwapOption<RecordingHandle>,
     has_keyframe: AtomicBool,
     pub simulcast_layers: DashMap<String, u32>,
+    pub sender_peer: Arc<RoomPeer>,
+    pub track_id: String,
 }
 
 impl PublishedTrack {
-    pub fn new(publisher: Uuid, kind: RtpCodecKind, codec: RTCRtpCodec) -> PublishedTrack {
+    pub fn new(
+        publisher: Uuid,
+        kind: RtpCodecKind,
+        codec: RTCRtpCodec,
+        romm_peer: Arc<RoomPeer>,
+        track_id: String,
+    ) -> PublishedTrack {
         Self {
             publisher,
             kind,
-            codec,
+            codec: ArcSwap::from_pointee(codec),
             outputs: ArcSwap::from_pointee(Vec::new()),
             // A track only reaches this state after its first RTP packet arrived,
             // so the publisher is considered active until proven otherwise.
@@ -55,7 +66,14 @@ impl PublishedTrack {
             recorder: ArcSwapOption::empty(),
             has_keyframe: AtomicBool::new(false),
             simulcast_layers: DashMap::new(),
+            sender_peer: romm_peer,
+            track_id,
         }
+    }
+
+    pub fn switch_codec(&self, codec: RTCRtpCodec) {
+        self.codec.store(Arc::new(codec));
+        self.has_keyframe.store(false, Ordering::Relaxed);
     }
 
     pub fn add_layer(&self, rid: String, ssrc: u32) {
@@ -102,6 +120,7 @@ impl PublishedTrack {
     /// so this only needs to carry kind + codec + one encoding with an SSRC.
     pub fn media_track(&self) -> MediaStreamTrack {
         let ssrc = Uuid::new_v4().as_u128() as u32;
+        let codec: RTCRtpCodec = self.codec.load_full().as_ref().clone();
         MediaStreamTrack::new(
             format!("stream-{}", self.publisher),
             format!("track-{}-{}", self.publisher, self.kind),
@@ -112,7 +131,7 @@ impl PublishedTrack {
                     ssrc: Some(ssrc),
                     ..Default::default()
                 },
-                codec: self.codec.clone(),
+                codec: codec,
                 ..Default::default()
             }],
         )
@@ -144,11 +163,55 @@ impl PublishedTrack {
             return;
         }
 
+        let d = parse_vp9(&pkt.payload);
+        let isvp9 = self.codec.load().mime_type.eq("video/VP9");
+        let mut needs_keyframe = false;
+
         for o in self.outputs.load_full().iter() {
-            match o.tx.try_send(pkt.clone()) {
-                Ok(()) => {}
-                Err(_) => warn!("forward {} -> {}: fanout queue full", self.publisher, o.sub),
+            if !isvp9 {
+                match o.tx.try_send(pkt.clone()) {
+                    Ok(()) => {}
+                    Err(_) => {
+                        warn!("forward {} -> {}: fanout queue full", self.publisher, o.sub)
+                    }
+                }
+                continue;
             }
+            let verdict = match &d {
+                Some(d) => o
+                    .svc
+                    .select(pkt.header.sequence_number, pkt.header.marker, d),
+                None => Verdict::Drop,
+            };
+            match verdict {
+                Verdict::Forward { seq, marker } => {
+                    let mut p = pkt.clone();
+                    p.header.sequence_number = seq;
+                    p.header.marker = marker;
+
+                    match o.tx.try_send(p) {
+                        Ok(()) => {}
+                        Err(_) => {
+                            warn!("forward {} -> {}: fanout queue full", self.publisher, o.sub)
+                        }
+                    }
+                }
+                Verdict::DropNeedKeyframe => {
+                    needs_keyframe = true;
+                }
+                Verdict::Drop => {}
+            }
+        }
+
+        // one PLI request per packet is enough: every output of this track
+        // shares the same publisher keyframe
+        if needs_keyframe {
+            _ = self
+                .sender_peer
+                .peer
+                .pli_wanted(self.track_id.clone())
+                .await;
+            debug!("requested keyframe for {}", self.publisher);
         }
     }
 

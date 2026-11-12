@@ -5,8 +5,9 @@
 pub mod errors;
 pub mod record;
 pub mod room;
-pub mod track;
 pub mod room_peer;
+pub mod svc;
+pub mod track;
 
 #[derive(Debug, Copy, Clone)]
 pub enum PeerType {

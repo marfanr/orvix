@@ -1,4 +1,5 @@
 use crate::peer::{
+    cmd::PeerCommand::SetOutboundCodec,
     constant::{CONTROL_LABEL, MEDIA_QUEUE_SIZE, MESSAGE_LABEL},
     driver::{AttachedOutput, MediaReceiver, OutboundTrack, PeerDriver},
     error::PeerError,
@@ -81,9 +82,14 @@ pub enum PeerCommand {
         sender_id: RTCRtpSenderId,
         resp: oneshot::Sender<Result<(), String>>,
     },
+    SetOutboundCodec {
+        sender_id: RTCRtpSenderId,
+        mime: String,
+    },
     SendControl(String),
     SendChat(String),
     Close,
+    WantedPli(String),
 }
 
 #[derive(Clone)]
@@ -92,6 +98,12 @@ pub struct PeerCommandInstance {
 }
 
 impl PeerCommandInstance {
+    pub async fn set_outbound_codec(&self, sender_id: RTCRtpSenderId, mime: String) {
+        _ = self
+            .tx
+            .send(PeerCommand::SetOutboundCodec { sender_id, mime })
+            .await;
+    }
     pub async fn answer_offer(&self, sdp: String, pc_type: PeerType) -> Result<String, String> {
         let (resp_tx, resp_rx) = oneshot::channel();
         self.tx
@@ -204,6 +216,10 @@ impl PeerCommandInstance {
     pub async fn close(self) {
         let _ = self.tx.send(PeerCommand::Close).await;
     }
+
+    pub async fn pli_wanted(&self, track_id: String) {
+        let _ = self.tx.send(PeerCommand::WantedPli(track_id)).await;
+    }
 }
 
 pub(super) async fn handle_msg(job: WorkerMessage) {
@@ -222,8 +238,15 @@ pub(super) async fn handle_msg(job: WorkerMessage) {
                     return;
                 }
             };
-            tokio::task::spawn_local(async move {
+            let handle = tokio::task::spawn_local(async move {
                 peer.run().await;
+            });
+            // a panic inside the driver kills only this task; without watching
+            // the JoinHandle the crash is invisible to the tracing log
+            tokio::task::spawn_local(async move {
+                if let Err(e) = handle.await {
+                    tracing::error!("conn {conn_id}: peer driver crashed: {e}");
+                }
             });
         }
     }
@@ -400,8 +423,9 @@ impl PeerDriver {
                     PeerType::PUBLISHER => &mut self.publisher_pc,
                     PeerType::SUBSCRIBER => &mut self.subscriber_pc,
                 };
+
                 let result = (|| -> Result<String, String> {
-                    let offer = RTCSessionDescription::offer(sdp)
+                    let offer = RTCSessionDescription::offer(sdp.clone())
                         .map_err(|e| format!("parse offer: {e}"))?;
                     pc.set_remote_description(now, offer)
                         .map_err(|e| format!("remote desc: {e}"))?;
@@ -410,6 +434,7 @@ impl PeerDriver {
                         .map_err(|e| format!("create answer: {e}"))?;
                     pc.set_local_description(now, answer.clone())
                         .map_err(|e| format!("local desc: {e}"))?;
+
                     Ok(answer.sdp)
                 })();
 
@@ -498,6 +523,19 @@ impl PeerDriver {
                 if let Some(mut dc) = self.publisher_pc.data_channel(self.pub_msg_id) {
                     if let Err(e) = dc.send_text(now, json) {
                         debug!("conn {}: chat send: {e}", self.conn_id);
+                    }
+                }
+            }
+            SetOutboundCodec { sender_id, mime } => {
+                if let Some(leg) = self.outbound.get_mut(&sender_id) {
+                    leg.mime = mime;
+                    leg.pt = None;
+                }
+            }
+            PeerCommand::WantedPli(track_id) => {
+                if let Some(inbound) = self.inbound.get_mut(&track_id) {
+                    if inbound.is_video {
+                        inbound.request_pli(now);
                     }
                 }
             }

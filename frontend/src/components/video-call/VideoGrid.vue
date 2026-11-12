@@ -87,46 +87,6 @@ function pin(id: Participant['id']) {
   pinnedId.value = id
 }
 
-
-// TODO: will be moved to another place
-const audioContext = new AudioContext()
-
-const getAudioLevel = (analyzer: AnalyserNode) => {
-  const data = new Float32Array(analyzer.fftSize)
-  analyzer.getFloatTimeDomainData(data)
-  let sum = 0
-  for (const d of data) {
-    sum += d*d
-  }
-  let res = Math.sqrt(sum / data.length)
-  console.log("audio level: ", res)
-}
-
-const handleAudio = (stream: MediaStream) => {
-  const audio_stream = stream.getAudioTracks()
-  if (audio_stream.length < 1) return
-
-  const audioStream = new MediaStream(audio_stream)
-  const source = audioContext.createMediaStreamSource(audioStream)
-  const analyzer = audioContext.createAnalyser()
-  analyzer.fftSize = 512
-  analyzer.smoothingTimeConstant = 0.4
-
-  getAudioLevel(analyzer)
-  source.connect(analyzer)
-}
-
-watch(
-  () => props.participants,
-  (paticipants) => {
-    for (const p of paticipants) {
-      if (!p.stream || p.muted) continue
-      handleAudio(p.stream)
-    }
-  },
-  { deep: true },
-)
-
 onMounted(() => {
   const el = gridRef.value
   if (!el) return

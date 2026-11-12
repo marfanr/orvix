@@ -21,7 +21,6 @@ impl PeerDriver {
                         let Ok(json) = ev.candidate.to_json() else {
                             continue;
                         };
-                        debug!("conn {}: publisher ice candidate generated", self.conn_id);
                         _ = self
                             .ws_sink
                             .send(ws::Message::text(
@@ -37,23 +36,7 @@ impl PeerDriver {
                             ))
                             .await;
                     }
-                    RTCPeerConnectionEvent::OnIceCandidateErrorEvent(e) => {
-                        warn!(
-                            "conn {}: publisher ice candidate error: {:?}",
-                            self.conn_id, e
-                        );
-                    }
-                    RTCPeerConnectionEvent::OnIceConnectionStateChangeEvent(state) => {
-                        info!(
-                            "conn {}: publisher ice state change {}",
-                            self.conn_id, state
-                        );
-                    }
                     RTCPeerConnectionEvent::OnConnectionStateChangeEvent(state) => {
-                        info!(
-                            "conn {}: publisher connection state {}",
-                            self.conn_id, state
-                        );
                         if state == RTCPeerConnectionState::Failed
                             || state == RTCPeerConnectionState::Closed
                         {
@@ -68,7 +51,7 @@ impl PeerDriver {
                         }
                     }
                     RTCPeerConnectionEvent::OnTrack(RTCTrackEvent::OnOpen(init)) => {
-                        debug!(
+                        info!(
                             "conn {}: publisher track open rid={}",
                             self.conn_id,
                             init.rid.clone().unwrap_or_default()
@@ -99,7 +82,6 @@ impl PeerDriver {
                         let Ok(json) = ev.candidate.to_json() else {
                             continue;
                         };
-                        info!("conn {}: subscriber ice candidate generated", self.conn_id);
 
                         _ = self
                             .ws_sink
@@ -122,17 +104,7 @@ impl PeerDriver {
                             self.conn_id, e
                         );
                     }
-                    RTCPeerConnectionEvent::OnIceConnectionStateChangeEvent(state) => {
-                        info!(
-                            "conn {}: subscriber ice state change {}",
-                            self.conn_id, state
-                        );
-                    }
                     RTCPeerConnectionEvent::OnConnectionStateChangeEvent(state) => {
-                        info!(
-                            "conn {}: subscriber connection state {}",
-                            self.conn_id, state
-                        );
                         if state == RTCPeerConnectionState::Failed
                             || state == RTCPeerConnectionState::Closed
                         {
@@ -141,7 +113,7 @@ impl PeerDriver {
                     }
                     RTCPeerConnectionEvent::OnTrack(RTCTrackEvent::OnOpen(init)) => {
                         // the client's publisher media arrives on this leg
-                        debug!(
+                        info!(
                             "conn {}: subscriber track open rid={}",
                             self.conn_id,
                             init.rid.clone().unwrap_or_default()
@@ -155,7 +127,11 @@ impl PeerDriver {
                         )
                         .await;
                     }
+                    RTCPeerConnectionEvent::OnTrack(RTCTrackEvent::OnError(err)) => {
+                        tracing::error!("RTCTrackEvent::OnError {err}");
+                    }
                     RTCPeerConnectionEvent::OnTrack(RTCTrackEvent::OnClose(track_id)) => {
+                        info!("track close : {}", &track_id);
                         if self.inbound.remove(&track_id).is_some() {
                             info!("conn {}: subscriber inbound track closed", self.conn_id);
                         }

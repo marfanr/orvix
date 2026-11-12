@@ -55,9 +55,7 @@ export interface NewMessageEvent {
 
 export enum SupportedVideoCodec {
   H264 = 'H264',
-  VP8 = 'VP8',
   VP9 = 'VP9',
-  AV1 = 'AVI',
 }
 
 export enum SupportedBitrate {

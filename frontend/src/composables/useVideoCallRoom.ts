@@ -11,6 +11,7 @@ import { useNotifySound } from '@/lib/audio'
 import { useLocalMedia } from './useLocalMedia'
 import { useSignaling } from './useSignaling'
 import { useWebRTC } from './useWebRTC'
+import { useMeetingConfigStore } from '@/stores/meetingConfig'
 
 export function useVideoCallRoom(getRoomParam: () => string | string[] | undefined) {
   const callStore = useCallStore()
@@ -24,8 +25,11 @@ export function useVideoCallRoom(getRoomParam: () => string | string[] | undefin
     remainingRequests,
     memberChangesData,
     newMessageData,
-    localRawStream,
+    outputStream,
   } = storeToRefs(callStore)
+
+  const meetConfigStore = useMeetingConfigStore()
+  const { form } = storeToRefs(meetConfigStore)
 
   const auth = useAuthStore()
   let participantSeq = 0
@@ -101,12 +105,7 @@ export function useVideoCallRoom(getRoomParam: () => string | string[] | undefin
     callStore.addNewMessage(msg, from)
   }
 
-  const webrtc = useWebRTC(
-    signaling.send,
-    onRemoteTrack,
-    handleControlChannel,
-    handleIncomingChat,
-  )
+  const webrtc = useWebRTC(signaling.send, onRemoteTrack, handleControlChannel, handleIncomingChat, signaling.sendOffer)
   const media = useLocalMedia(participants)
 
   const sendChat = (msg: string, target: string) => {
@@ -118,24 +117,9 @@ export function useVideoCallRoom(getRoomParam: () => string | string[] | undefin
   const muted = computed(() => media.getMe()?.muted ?? true)
 
   const outgoingStream = (): MediaStream | null => {
-    const out = localRawStream.value
+    const out = outputStream.value
     if (out && out.getVideoTracks().some((t) => t.readyState === 'live')) return out
     return media.getMe()?.stream ?? null
-  }
-
-  let renegotiateQueued = false
-
-  const negotiate = async (): Promise<void> => {
-    const pc = webrtc.peerCon.value
-    if (!pc) return
-    if (pc.signalingState !== 'stable') {
-      renegotiateQueued = true
-      return
-    }
-    renegotiateQueued = false
-
-    const sdp = await webrtc.createOffer()
-    if (sdp) signaling.sendOffer(sdp)
   }
 
   const onJoinedRoom = async (): Promise<void> => {
@@ -145,16 +129,18 @@ export function useVideoCallRoom(getRoomParam: () => string | string[] | undefin
     const stream = outgoingStream()
     if (stream) await webrtc.addLocalStream(stream)
 
-    const sdp = await webrtc.createOffer()
-    if (sdp) signaling.sendOffer(sdp)
+    // addLocalStream triggered `onnegotiationneeded
+    if (pc.signalingState !== 'stable') {
+      const sdp = await webrtc.createOffer()
+      if (sdp) signaling.sendOffer(sdp)
+    }
   }
 
   const syncOutgoing = async (): Promise<void> => {
     const stream = outgoingStream()
     if (!stream) return
 
-    const needsNegotiation = await webrtc.addLocalStream(stream)
-    if (needsNegotiation) await negotiate()
+    await webrtc.addLocalStream(stream)
   }
 
   const toggleCamera = async () => {
@@ -168,7 +154,7 @@ export function useVideoCallRoom(getRoomParam: () => string | string[] | undefin
   }
 
   watch(
-    () => localRawStream.value,
+    () => outputStream.value,
     async () => {
       if (room.value.status !== 'joined') return // onJoinedRoom yang akan mengirim
       await syncOutgoing()
@@ -197,7 +183,6 @@ export function useVideoCallRoom(getRoomParam: () => string | string[] | undefin
         case 'join':
           if (data.accept) callStore.room.status = 'joined'
           else if (callStore.room.status !== 'joined') callStore.room.status = 'denied'
-          webrtc.sendDataControl('test')
           break
 
         // synchronize current members
@@ -243,7 +228,7 @@ export function useVideoCallRoom(getRoomParam: () => string | string[] | undefin
         // handle offer from server subscriber
         case 'answer': {
           await webrtc.setRemoteAnswer(data.sdp)
-          if (renegotiateQueued) await negotiate()
+          console.log('new answer')
           break
         }
 

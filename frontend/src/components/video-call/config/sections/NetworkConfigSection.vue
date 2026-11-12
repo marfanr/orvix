@@ -3,7 +3,7 @@ import { computed, useId } from 'vue'
 import SelectElement from '@/components/ui/SelectElement.vue'
 import ToggleElement from '@/components/ui/ToggleElement.vue'
 import { useMeetingConfigStore, type MeetingConfigToggleItem } from '@/stores/meetingConfig'
-import { SupportedBitrate, SupportedVideoCodec } from '@/types/video-call.ts'
+import { SupportedBitrate } from '@/types/video-call.ts'
 
 const store = useMeetingConfigStore()
 const form = store.form
@@ -17,14 +17,6 @@ const bitrateOptions = [
   { value: SupportedBitrate.B8, label: '8 Mbps' },
 ]
 
-const codecOptions = [
-  { value: SupportedVideoCodec.H264, label: 'H.264' },
-  { value: SupportedVideoCodec.VP8, label: 'VP8' },
-  { value: SupportedVideoCodec.VP9, label: 'VP9' },
-  { value: SupportedVideoCodec.AV1, label: 'AV1' },
-]
-
-
 const networkToggles: MeetingConfigToggleItem[] = [
   {
     key: 'adaptiveBitrate',
@@ -32,9 +24,9 @@ const networkToggles: MeetingConfigToggleItem[] = [
     description: 'Lower quality automatically when the connection drops.',
   },
   {
-    key: 'simulcast',
-    label: 'Simulcast',
-    description: 'Send multiple video layers so weak peers can pick a lower one.',
+    key: 'svc',
+    label: 'Scalable Video Coding (SVC)',
+    description: 'Single layered stream, adapted per receiver by the SFU. Defaults to simulcast when off. Reload required to apply.',
   },
 ]
 
@@ -61,10 +53,6 @@ const estimatedUpload = computed(() => {
       <div class="mt-5 grid gap-4 sm:grid-cols-2">
         <SelectElement :id="`${uid}-bitrate`" v-model="form.maxBitrate" label="Max upload bitrate"
           :options="bitrateOptions" :hint="`Video upload is ${estimatedUpload}.`" />
-
-        <SelectElement :id="`${uid}-codec`" v-model="form.preferredCodec" label="Preferred video codec"
-          :options="codecOptions" hint="for now H.264 is required while server recording is enabled." />
-
       </div>
     </div>
 
