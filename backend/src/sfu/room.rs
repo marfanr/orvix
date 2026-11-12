@@ -337,6 +337,14 @@ impl RoomSfu {
         failed
     }
 
+    pub fn pending_joiners(&self) -> Vec<(Uuid, Arc<str>)> {
+        self.peers
+            .iter()
+            .filter(|p| !p.value().is_admitted())
+            .map(|p| (*p.key(), Arc::clone(&p.value().username)))
+            .collect()
+    }
+
     pub fn send_to_owner(&self, from: Uuid, msg: Message) -> Vec<Uuid> {
         let mut failed = Vec::new();
 
@@ -459,6 +467,26 @@ mod tests {
 
         peer.admit();
         assert!(peer.is_admitted());
+    }
+
+    /// Pending joiners must be discoverable when the owner reconnects so their
+    /// `request` message can be replayed instead of being lost.
+    #[tokio::test]
+    async fn pending_joiners_lists_only_unadmitted_peers() {
+        let room = room();
+        let admitted = guest().await;
+        admitted.admit();
+        let pending = guest().await;
+
+        let admitted_id = Uuid::new_v4();
+        let pending_id = Uuid::new_v4();
+        assert!(room.add_peer(admitted_id, admitted));
+        assert!(room.add_peer(pending_id, pending));
+
+        let joiners = room.pending_joiners();
+        assert_eq!(joiners.len(), 1);
+        assert_eq!(joiners[0].0, pending_id);
+        assert_eq!(&*joiners[0].1, "guest");
     }
 
     /// A track that just started publishing is active, and every state change must be

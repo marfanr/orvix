@@ -99,7 +99,7 @@ async fn create_room(
         user_id,
         req.passcode.as_deref(),
         req.title.as_deref(),
-        options
+        options,
     );
     let room_id = room.create(&db).await?.to_string();
 

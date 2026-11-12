@@ -196,9 +196,23 @@ impl WsMsg {
 
         // handle joining room request
         // if owner directy enter the room
+        // TODO: give permission for another user, instead for room owner only
         if user_id == Some(room.owner_id) {
             answer_join(&self_sink, true, conn_id).await?;
             tracing::info!("Owner joined , current member room : {}", room.peers.len());
+
+            // reply request
+            for (pending_conn, pending_name) in room.pending_joiners() {
+                let request = sonic_rs::json!({
+                    "type": "request",
+                    "from": {"conn_id": pending_conn, "username": pending_name},
+                })
+                .to_string();
+
+                if let Err(e) = self_sink.send(Message::text(request)).await {
+                    warn!("replay join request for {pending_conn}: {e}");
+                }
+            }
 
             // resend sync into self and each member
             _ = sync_room_member(&self_sink, &room, &conn_id)
