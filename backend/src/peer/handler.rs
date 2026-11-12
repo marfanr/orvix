@@ -36,12 +36,6 @@ impl PeerDriver {
                             ))
                             .await;
                     }
-                    RTCPeerConnectionEvent::OnIceCandidateErrorEvent(e) => {
-                        warn!(
-                            "conn {}: publisher ice candidate error: {:?}",
-                            self.conn_id, e
-                        );
-                    }
                     RTCPeerConnectionEvent::OnConnectionStateChangeEvent(state) => {
                         if state == RTCPeerConnectionState::Failed
                             || state == RTCPeerConnectionState::Closed
@@ -57,7 +51,7 @@ impl PeerDriver {
                         }
                     }
                     RTCPeerConnectionEvent::OnTrack(RTCTrackEvent::OnOpen(init)) => {
-                        debug!(
+                        info!(
                             "conn {}: publisher track open rid={}",
                             self.conn_id,
                             init.rid.clone().unwrap_or_default()
@@ -110,7 +104,6 @@ impl PeerDriver {
                             self.conn_id, e
                         );
                     }
-
                     RTCPeerConnectionEvent::OnConnectionStateChangeEvent(state) => {
                         if state == RTCPeerConnectionState::Failed
                             || state == RTCPeerConnectionState::Closed
@@ -120,7 +113,7 @@ impl PeerDriver {
                     }
                     RTCPeerConnectionEvent::OnTrack(RTCTrackEvent::OnOpen(init)) => {
                         // the client's publisher media arrives on this leg
-                        debug!(
+                        info!(
                             "conn {}: subscriber track open rid={}",
                             self.conn_id,
                             init.rid.clone().unwrap_or_default()
@@ -134,7 +127,11 @@ impl PeerDriver {
                         )
                         .await;
                     }
+                    RTCPeerConnectionEvent::OnTrack(RTCTrackEvent::OnError(err)) => {
+                        tracing::error!("RTCTrackEvent::OnError {err}");
+                    }
                     RTCPeerConnectionEvent::OnTrack(RTCTrackEvent::OnClose(track_id)) => {
+                        info!("track close : {}", &track_id);
                         if self.inbound.remove(&track_id).is_some() {
                             info!("conn {}: subscriber inbound track closed", self.conn_id);
                         }

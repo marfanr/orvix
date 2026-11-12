@@ -4,6 +4,7 @@
 
 use crate::peer::constant::{FORWARD_RID, PLI_WINDOW};
 use crate::peer::driver::PeerDriver;
+use crate::sfu::svc::parse_vp9;
 use rtc::data_channel::RTCDataChannelMessage;
 use rtc::peer_connection::message::RTCMessage;
 use rtc::rtp_transceiver::rtp_sender::{RTCRtpCodec, RtpCodecKind};
@@ -12,6 +13,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use tracing::{debug, error, info};
 use uuid::Uuid;
+use validator::ValidateLength;
 
 #[derive(Deserialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -44,9 +46,12 @@ impl PeerDriver {
                 // start_record_bot(room.clone()).await;
                 // self.room.tracks.r
             }
-            Ok(ControlMessage::CodecChanged { codec, mime }) => {
+            Ok(ControlMessage::CodecChanged { codec, .. }) => {
                 info!("codec changed into {}", codec);
-                // for now only handle video
+                // for now only handle video.
+                // normalize: outbound legs match mime case-insensitively, but
+                // PublishedTrack codec comparisons are exact
+                let mime = format!("video/{}", codec.to_uppercase());
 
                 let published = self
                     .room
@@ -81,9 +86,11 @@ impl PeerDriver {
                     .values_mut()
                     .find(|t| t.kind == RtpCodecKind::Video)
                 {
+                    state.mime = mime.clone();
                     state.paused = false;
                     state.pli_until = Instant::now() + PLI_WINDOW;
                 }
+                let id = track.track_id.clone();
 
                 let layers: Vec<(String, u32)> = track
                     .simulcast_layers
@@ -95,7 +102,14 @@ impl PeerDriver {
 
                 for (rid, ssrc) in layers {
                     self.room
-                        .publish_track(conn_id, RtpCodecKind::Video, new_codec.clone(), rid, ssrc)
+                        .publish_track(
+                            conn_id,
+                            RtpCodecKind::Video,
+                            new_codec.clone(),
+                            rid,
+                            ssrc,
+                            id.clone(),
+                        )
                         .await;
                 }
             }

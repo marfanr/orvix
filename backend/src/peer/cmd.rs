@@ -89,6 +89,7 @@ pub enum PeerCommand {
     SendControl(String),
     SendChat(String),
     Close,
+    WantedPli(String),
 }
 
 #[derive(Clone)]
@@ -215,6 +216,10 @@ impl PeerCommandInstance {
     pub async fn close(self) {
         let _ = self.tx.send(PeerCommand::Close).await;
     }
+
+    pub async fn pli_wanted(&self, track_id: String) {
+        let _ = self.tx.send(PeerCommand::WantedPli(track_id)).await;
+    }
 }
 
 pub(super) async fn handle_msg(job: WorkerMessage) {
@@ -233,8 +238,15 @@ pub(super) async fn handle_msg(job: WorkerMessage) {
                     return;
                 }
             };
-            tokio::task::spawn_local(async move {
+            let handle = tokio::task::spawn_local(async move {
                 peer.run().await;
+            });
+            // a panic inside the driver kills only this task; without watching
+            // the JoinHandle the crash is invisible to the tracing log
+            tokio::task::spawn_local(async move {
+                if let Err(e) = handle.await {
+                    tracing::error!("conn {conn_id}: peer driver crashed: {e}");
+                }
             });
         }
     }
@@ -411,8 +423,9 @@ impl PeerDriver {
                     PeerType::PUBLISHER => &mut self.publisher_pc,
                     PeerType::SUBSCRIBER => &mut self.subscriber_pc,
                 };
+
                 let result = (|| -> Result<String, String> {
-                    let offer = RTCSessionDescription::offer(sdp)
+                    let offer = RTCSessionDescription::offer(sdp.clone())
                         .map_err(|e| format!("parse offer: {e}"))?;
                     pc.set_remote_description(now, offer)
                         .map_err(|e| format!("remote desc: {e}"))?;
@@ -421,6 +434,7 @@ impl PeerDriver {
                         .map_err(|e| format!("create answer: {e}"))?;
                     pc.set_local_description(now, answer.clone())
                         .map_err(|e| format!("local desc: {e}"))?;
+
                     Ok(answer.sdp)
                 })();
 
@@ -516,6 +530,13 @@ impl PeerDriver {
                 if let Some(leg) = self.outbound.get_mut(&sender_id) {
                     leg.mime = mime;
                     leg.pt = None;
+                }
+            }
+            PeerCommand::WantedPli(track_id) => {
+                if let Some(inbound) = self.inbound.get_mut(&track_id) {
+                    if inbound.is_video {
+                        inbound.request_pli(now);
+                    }
                 }
             }
         }

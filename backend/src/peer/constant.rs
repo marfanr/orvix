@@ -22,7 +22,7 @@ pub const PEER_QUEUE: usize = 1024;
 /// max commands applied per loop iteration
 pub const CMD_BATCH: usize = 32;
 /// how long before an inbound track is considered dead
-pub const IDLE_TIMEOUT: Duration = Duration::from_millis(500);
+pub const IDLE_TIMEOUT: Duration = Duration::from_millis(800);
 /// minimum interval between PLI requests on a given track
 pub const PLI_INTERVAL: Duration = Duration::from_millis(650);
 /// window during which a resumed track keeps asking for keyframes
