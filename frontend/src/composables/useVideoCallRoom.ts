@@ -105,7 +105,7 @@ export function useVideoCallRoom(getRoomParam: () => string | string[] | undefin
     callStore.addNewMessage(msg, from)
   }
 
-  const webrtc = useWebRTC(signaling.send, onRemoteTrack, handleControlChannel, handleIncomingChat)
+  const webrtc = useWebRTC(signaling.send, onRemoteTrack, handleControlChannel, handleIncomingChat, signaling.sendOffer)
   const media = useLocalMedia(participants)
 
   const sendChat = (msg: string, target: string) => {
@@ -122,57 +122,6 @@ export function useVideoCallRoom(getRoomParam: () => string | string[] | undefin
     return media.getMe()?.stream ?? null
   }
 
-  let renegotiateQueued = false
-
-  const negotiate = async (): Promise<void> => {
-    const pc = webrtc.peerCon.value
-    if (!pc) return
-    if (pc.signalingState !== 'stable') {
-      renegotiateQueued = true
-      return
-    }
-    renegotiateQueued = false
-
-    const sdp = await webrtc.createOffer()
-    if (sdp) signaling.sendOffer(sdp)
-  }
-
-  let prev_codecs = form.value.preferredCodec
-  watch(
-    () => form.value.preferredCodec,
-    async (v) => {
-      if (v !== prev_codecs) {
-        console.log('code changed')
-        const pc = webrtc.peerCon.value
-        const sender = pc?.getSenders().find((s) => s.track?.kind == 'video')
-        if (!sender?.track) return
-
-        const stats = await sender?.getStats()
-
-        let mime: string | undefined
-        let codecId: string | undefined
-
-        stats.forEach((s) => {
-          if (s.type === 'outbound-rtp' && s.kind === 'video') {
-            codecId = s.codecId
-          }
-        })
-
-        if (codecId) {
-          const codec = stats.get(codecId)
-
-          if (codec?.type === 'codec') {
-            mime = codec.mimeType
-          }
-        }
-        console.log('mime ', mime, 'codec', codecId)
-
-        webrtc.sendDataControl(JSON.stringify({ type: 'codec_changed', codec: codecId, mime: mime }))
-        prev_codecs = v
-      }
-    },
-  )
-
   const onJoinedRoom = async (): Promise<void> => {
     const pc = webrtc.peerCon.value
     if (!pc) return
@@ -180,16 +129,18 @@ export function useVideoCallRoom(getRoomParam: () => string | string[] | undefin
     const stream = outgoingStream()
     if (stream) await webrtc.addLocalStream(stream)
 
-    const sdp = await webrtc.createOffer()
-    if (sdp) signaling.sendOffer(sdp)
+    // addLocalStream triggered `onnegotiationneeded
+    if (pc.signalingState !== 'stable') {
+      const sdp = await webrtc.createOffer()
+      if (sdp) signaling.sendOffer(sdp)
+    }
   }
 
   const syncOutgoing = async (): Promise<void> => {
     const stream = outgoingStream()
     if (!stream) return
 
-    const needsNegotiation = await webrtc.addLocalStream(stream)
-    if (needsNegotiation) await negotiate()
+    await webrtc.addLocalStream(stream)
   }
 
   const toggleCamera = async () => {
@@ -277,7 +228,7 @@ export function useVideoCallRoom(getRoomParam: () => string | string[] | undefin
         // handle offer from server subscriber
         case 'answer': {
           await webrtc.setRemoteAnswer(data.sdp)
-          if (renegotiateQueued) await negotiate()
+          console.log('new answer')
           break
         }
 

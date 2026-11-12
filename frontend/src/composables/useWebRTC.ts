@@ -5,43 +5,26 @@
 import { ref } from 'vue'
 import { SupportedVideoCodec } from '@/types/video-call.ts'
 import { useMeetingConfigStore } from '@/stores/meetingConfig'
+import { isSvcSupported, preferCodec } from '@/lib/media'
+import { storeToRefs } from 'pinia'
 
 export type DataControlType = string | Blob | ArrayBuffer
 
 type PcRole = 'pub' | 'sub'
-
-type BitrateSetting = { mode: 'keep' } | { mode: 'unlimited' } | { mode: 'cap'; bps: number }
-
-const LAYER_SHARE: Record<string, number> = { q: 0.2, h: 0.6, f: 1 }
-
-const resolveBitrate = (v: unknown): BitrateSetting => {
-  switch (v) {
-    case 'auto':
-      return { mode: 'keep' }
-    case '1':
-      return { mode: 'cap', bps: 1_000_000 }
-    case '2':
-      return { mode: 'cap', bps: 2_000_000 }
-    case '4':
-      return { mode: 'cap', bps: 4_000_000 }
-    case '8':
-      return { mode: 'cap', bps: 8_000_000 }
-    default:
-      return { mode: 'unlimited' }
-  }
-}
 
 export function useWebRTC(
   send: (obj: unknown) => unknown,
   onTrack?: (e: RTCTrackEvent) => void,
   handleControl?: (c: MessageEvent) => void,
   handleIncomingChat?: (msg: string, from: string, timestamp: number) => void,
+  sendOffer?: (offer: string) => void,
 ) {
   const debug = (...args: unknown[]) => {
     if (import.meta.env.DEV) console.log(...args)
   }
 
-  const form = useMeetingConfigStore().form
+  const store = useMeetingConfigStore()
+  const { form } = storeToRefs(store)
 
   const remoteVideoRef = ref<HTMLVideoElement | null>(null)
 
@@ -166,12 +149,58 @@ export function useWebRTC(
     })
     pub_pc.addEventListener('datachannel', (e) => {
       const channel = e.channel
-      console.log("new msg in datcan")
+      console.log('new msg in datcan')
 
       channel.onmessage = (msg) => {
         handleControl?.(msg)
       }
     })
+
+    let offering = false
+    pub_pc.onnegotiationneeded = async () => {
+      if (offering) return
+      offering = true
+      try {
+        console.log('needed renegotiation')
+        const sdp = await createOffer()
+        if (sdp) sendOffer!(sdp)
+      } catch (err) {
+        console.error('[useWebRTC] createOffer/sendOffer failed:', err)
+      } finally {
+        offering = false
+      }
+    }
+  }
+
+  const getPrefredCodecsAndModes = async () => {
+    const codecs = ['video/VP9', 'video/AV1', 'video/VP8', 'video/H264']
+    const modes = ['L3T3_KEY', 'L2T3_KEY', 'L2T1', 'L1T3', 'L1T2', 'L1T1']
+
+    for (const contentType of codecs) {
+      for (const scalabilityMode of modes) {
+        try {
+          const info = await navigator.mediaCapabilities.encodingInfo({
+            type: 'webrtc',
+            video: {
+              contentType,
+              width: 640,
+              height: 480,
+              bitrate: 1_000_000,
+              framerate: 30,
+              scalabilityMode: scalabilityMode,
+            },
+          })
+
+          if (info.supported) {
+            console.log(contentType, scalabilityMode, info)
+            // return [contentType, scalabilityMode]
+            break
+          }
+        } catch {
+          continue
+        }
+      }
+    }
   }
 
   /// attach local media tracks
@@ -191,17 +220,29 @@ export function useWebRTC(
         continue
       }
 
+      const selected = await getPrefredCodecsAndModes()
+
+      const useSvc = (await isSvcSupported()) && form.value.svc
+      console.log('selected', selected)
+
       if (track.kind === 'video') {
+        const encodings = useSvc
+          ? [
+              {
+                scalabilityMode: 'L3T3',
+              },
+            ]
+          : [
+              { rid: 'q', scaleResolutionDownBy: 3, maxBitrate: 500_000, maxFramerate: 30 },
+              { rid: 'h', scaleResolutionDownBy: 1.5, maxBitrate: 1_500_000, maxFramerate: 30 },
+              { rid: 'f', scaleResolutionDownBy: 1, maxBitrate: 2_500_000, maxFramerate: 30 },
+            ]
         const tr = localTracksTranceiver.value
         if (!tr) {
           localTracksTranceiver.value = pc.addTransceiver(track, {
             direction: 'sendonly',
             streams: [stream],
-            sendEncodings: [
-              { rid: 'q', scaleResolutionDownBy: 3, maxBitrate: 500_000, maxFramerate: 30 },
-              { rid: 'h', scaleResolutionDownBy: 1.5, maxBitrate: 1_500_000, maxFramerate: 30 },
-              { rid: 'f', scaleResolutionDownBy: 1, maxBitrate: 2_500_000, maxFramerate: 30 },
-            ],
+            sendEncodings: encodings,
           })
           localTracksVideo.value = localTracksTranceiver.value.sender
           needsNegotiation = true
@@ -212,6 +253,7 @@ export function useWebRTC(
       } else if (track.kind === 'audio') {
         if (!localTracksAudio.value) {
           localTracksAudio.value = pc.addTrack(track, stream)
+
           needsNegotiation = true
         } else if (localTracksAudio.value.track?.id !== track.id) {
           await localTracksAudio.value.replaceTrack(track)
@@ -219,71 +261,20 @@ export function useWebRTC(
       }
     }
 
+    console.log('need negotiation')
     return needsNegotiation
-  }
-
-  const preferCodec = async (
-    pc: RTCPeerConnection,
-    codec: SupportedVideoCodec,
-    kind: string = 'video',
-  ): Promise<void> => {
-    codec ??= SupportedVideoCodec.VP9
-    debug(`sellected = ${kind}/${codec.toString()}`)
-    if (typeof RTCRtpSender.getCapabilities !== 'function') return
-
-    const codecs = RTCRtpSender.getCapabilities(kind)?.codecs ?? []
-
-    const sellectedCodec = codecs.filter(
-      (c) => c.mimeType.toLowerCase() === `${kind}/${codec.toString().toLowerCase()}`,
-    )
-    if (sellectedCodec.length === 0) {
-      console.warn(`${kind}/${codec.toString()} is not available, recording will not work`)
-      return
-    }
-
-    const bitrate = resolveBitrate(form.maxBitrate)
-
-    if (bitrate.mode !== 'keep') {
-      for (const s of pc.getSenders()) {
-        if (s.track?.kind !== 'video') continue
-
-        const p = s.getParameters()
-        if (!p.encodings || p.encodings.length === 0) continue
-
-        for (const enc of p.encodings) {
-          if (bitrate.mode === 'unlimited') {
-            delete enc.maxBitrate
-          } else {
-            const share = (enc.rid && LAYER_SHARE[enc.rid]) || 1
-            enc.maxBitrate = Math.round(bitrate.bps * share)
-          }
-        }
-
-        try {
-          await s.setParameters(p)
-        } catch (err) {
-          console.warn('setParameters failed', err)
-        }
-      }
-    }
-
-    for (const transceiver of pc.getTransceivers()) {
-      const trKind = transceiver.sender.track?.kind ?? transceiver.receiver.track?.kind
-      if (trKind !== 'video') continue
-
-      try {
-        transceiver.setCodecPreferences(sellectedCodec)
-      } catch (err) {
-        console.warn('setCodecPreferences failed', err)
-      }
-    }
   }
 
   /// create offer + apply it locally, returns the sdp to be sent to the peer
   const createOffer = async (): Promise<string | undefined> => {
     const pc = PublisherPeerCon.value
     if (!pc) return undefined
-    await preferCodec(pc, form.preferredCodec, 'video')
+    const codec =
+      form.value.svc && (await isSvcSupported())
+        ? SupportedVideoCodec.VP9
+        : SupportedVideoCodec.H264
+
+    await preferCodec(pc, codec, 'video')
     const offer = await pc.createOffer()
     await pc.setLocalDescription(offer)
     return pc.localDescription?.sdp ?? offer.sdp
@@ -292,7 +283,24 @@ export function useWebRTC(
   const setRemoteAnswer = async (sdp: string) => {
     const pc = PublisherPeerCon.value
     if (!pc) return
-    await pc.setRemoteDescription({ type: 'answer', sdp })
+    if (pc.signalingState !== 'have-local-offer') {
+      console.warn('[useWebRTC] answer ignored, signalingState =', pc.signalingState)
+      return
+    }
+    try {
+      await pc.setRemoteDescription({ type: 'answer', sdp })
+    } catch (err) {
+      console.error('[useWebRTC] setRemoteDescription(answer) failed:', err)
+      // recover: Chrome replaces a pending offer when a new offer is applied,
+      // so a fresh offer unblocks the connection instead of staying stuck
+      try {
+        const sdp2 = await createOffer()
+        if (sdp2) sendOffer?.(sdp2)
+      } catch (retryErr) {
+        console.error('[useWebRTC] recovery offer failed:', retryErr)
+      }
+      return
+    }
     remoteDescSet.pub = true
     await flushPendingCandidates('pub')
   }
@@ -368,6 +376,61 @@ export function useWebRTC(
     remoteDescSet.sub = false
   }
 
+  const addVideoTransceiver = (
+    pc: RTCPeerConnection,
+    track: MediaStreamTrack,
+    stream: MediaStream,
+  ): RTCRtpTransceiver => {
+    try {
+      return pc.addTransceiver(track, {
+        direction: 'sendonly',
+        streams: [stream],
+        // sama dengan transceiver awal: rid q/h/f, supaya pemetaan layer
+        // simulcast di server (FORWARD_RID = "q") tetap konsisten
+        sendEncodings: [
+          { rid: 'q', scaleResolutionDownBy: 3, maxBitrate: 500_000, maxFramerate: 30 },
+          { rid: 'h', scaleResolutionDownBy: 1.5, maxBitrate: 1_500_000, maxFramerate: 30 },
+          { rid: 'f', scaleResolutionDownBy: 1, maxBitrate: 2_500_000, maxFramerate: 30 },
+        ],
+      })
+    } catch (err) {
+      console.warn('addTransceiver with preferred encodings failed, fallback to default', err)
+      return pc.addTransceiver(track, { direction: 'sendonly', streams: [stream] })
+    }
+  }
+
+  const newTransceiver = (stream: MediaStream) => {
+    const pc = PublisherPeerCon.value
+    const track = stream.getVideoTracks().find((t) => t.readyState === 'live')
+    if (!pc || !track) return false
+
+    const old = localTracksTranceiver.value
+    const created = addVideoTransceiver(pc, track, stream)
+
+    localTracksTranceiver.value = created
+    localTracksVideo.value = created.sender
+
+    old?.stop()
+    console.log('old', old?.currentDirection)
+  }
+
+  /// switch video codec WITHOUT replacing the transceiver: stopping the old one
+  /// leaves a port-0 m-line in the next offer that the server mishandles, while
+  /// the same transceiver keeps its mid/ssrc and only renegotiates the codec set
+  const switchVideoCodec = (codec: SupportedVideoCodec): void => {
+    const pc = PublisherPeerCon.value
+    if (!pc) return
+    void preferCodec(pc, codec).then(() => {
+      sendDataControl(
+        JSON.stringify({
+          type: 'codec_changed',
+          codec: codec.toString(),
+          mime: `video/${codec.toString()}`,
+        }),
+      )
+    })
+  }
+
   return {
     remoteVideoRef,
     peerCon: PublisherPeerCon,
@@ -382,5 +445,7 @@ export function useWebRTC(
     localTracksAudio,
     sendDataControl,
     sendChat,
+    newTransceiver,
+    switchVideoCodec,
   }
 }

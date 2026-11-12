@@ -58,7 +58,7 @@ onUnmounted(() => {
 
         <div
           ref="contentEl"
-          class="relative flex h-full w-full flex-col overflow-hidden bg-white lg:h-[520px] lg:max-h-[85vh] lg:rounded-lg lg:border lg:border-gray-200 lg:shadow-2xl"
+          class="relative flex h-full w-full flex-col overflow-hidden bg-white lg:h-[520px] lg:max-h-[85vh] lg:rounded-lg lg:border lg:border-gray-200 lg:shadow-2xl z-55"
           :class="widthToClass(props.width)"
           role="dialog"
           aria-modal="true"
