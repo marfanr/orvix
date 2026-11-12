@@ -5,6 +5,7 @@
 use crate::models;
 use crate::models::room::Room;
 use crate::sfu::room_peer::RoomPeer;
+use crate::sfu::svc::LayerSelector;
 use crate::sfu::track::{Output, PublishedTrack};
 use axum::extract::ws::Message;
 use dashmap::DashMap;
@@ -158,6 +159,7 @@ impl RoomSfu {
         codec: RTCRtpCodec,
         rid: String,
         ssrc: u32,
+        track_id: String,
     ) -> Arc<PublishedTrack> {
         let track = {
             let mut entry = self.tracks.entry(publisher).or_default();
@@ -167,7 +169,15 @@ impl RoomSfu {
             if let Some(t) = existing {
                 t
             } else {
-                let new_track = Arc::new(PublishedTrack::new(publisher, kind, codec));
+                let room_peer = self
+                    .peers
+                    .get(&publisher)
+                    .map(|p| p.value().clone())
+                    .expect("room peer not found");
+
+                let new_track = Arc::new(PublishedTrack::new(
+                    publisher, kind, codec, room_peer, track_id,
+                ));
                 entry.push(new_track.clone());
                 new_track
             }
@@ -199,6 +209,12 @@ impl RoomSfu {
     }
 
     async fn attach(&self, t: &Arc<PublishedTrack>, sub_id: Uuid, peer: &RoomPeer) -> bool {
+        // Pending joiners live in `peers` so the owner can admit them, but they
+        // must not receive tracks before admission: their client has no
+        // participant entry yet and would drop the track/state forever.
+        if !peer.is_admitted() {
+            return false;
+        }
         if t.is_output_exist(sub_id) {
             return false;
         }
@@ -215,6 +231,7 @@ impl RoomSfu {
             sub: sub_id,
             sender_id: attached.sender_id,
             tx: attached.tx,
+            svc: Arc::new(LayerSelector::new(0, 2)),
         })
         .await;
         self.send_track_state(sub_id, t).await;
@@ -384,7 +401,20 @@ mod tests {
         }
     }
 
-    fn published(publisher: Uuid) -> PublishedTrack {
+    async fn published(publisher: Uuid) -> PublishedTrack {
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        let sender_peer = RoomPeer::new(
+            None,
+            Uuid::new_v4(),
+            Arc::from("test"),
+            Arc::new(crate::peer::PeerCommandInstance { tx }),
+            None,
+            Arc::new(room()),
+            true,
+        )
+        .await
+        .ok()
+        .unwrap();
         PublishedTrack::new(
             publisher,
             RtpCodecKind::Video,
@@ -393,7 +423,42 @@ mod tests {
                 clock_rate: 90000,
                 ..Default::default()
             },
+            sender_peer,
+            "track-test".to_owned(),
         )
+    }
+
+    async fn guest() -> Arc<RoomPeer> {
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        RoomPeer::new(
+            None,
+            Uuid::new_v4(),
+            Arc::from("guest"),
+            Arc::new(crate::peer::PeerCommandInstance { tx }),
+            None,
+            Arc::new(room()),
+            false,
+        )
+        .await
+        .ok()
+        .unwrap()
+    }
+
+    /// A pending joiner is in the room map but must not receive tracks until the
+    /// owner admits it; otherwise its client drops the early track/state and the
+    /// publisher's camera stays "off" forever.
+    #[tokio::test]
+    async fn pending_peer_does_not_receive_tracks() {
+        let room = room();
+        let track = Arc::new(published(Uuid::nil()).await);
+        let peer = guest().await;
+        let sub_id = Uuid::new_v4();
+
+        assert!(!room.attach(&track, sub_id, &peer).await);
+        assert!(!track.is_output_exist(sub_id));
+
+        peer.admit();
+        assert!(peer.is_admitted());
     }
 
     /// A track that just started publishing is active, and every state change must be
@@ -402,7 +467,7 @@ mod tests {
     #[tokio::test]
     async fn track_state_changes_are_reported_once() {
         let room = room();
-        let track = published(Uuid::nil());
+        let track = published(Uuid::nil()).await;
 
         assert!(track.is_active());
 

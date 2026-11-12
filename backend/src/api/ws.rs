@@ -71,7 +71,7 @@ async fn sync_room_member(
     let members: Vec<_> = r
         .peers
         .iter()
-        .filter(|p| p.key() != conn_id)
+        .filter(|p| p.key() != conn_id && p.value().is_admitted())
         .map(|p| {
             sonic_rs::json!({
                 "conn_id": p.key(),
@@ -171,9 +171,14 @@ impl WsMsg {
         //        |  <------ control channel (track_state)      |
 
         // TODO: migration to RTC sans-io
-        let new_peer =
-            crate::peer::create_peer(conn_id, state.announce_ip, Arc::clone(&room_arc), self_sink.clone());
+        let new_peer = crate::peer::create_peer(
+            conn_id,
+            state.announce_ip,
+            Arc::clone(&room_arc),
+            self_sink.clone(),
+        );
 
+        let admitted = user_id == Some(room.owner_id);
         let room_peer = RoomPeer::new(
             user_id,
             conn_id,
@@ -181,6 +186,7 @@ impl WsMsg {
             new_peer,
             Some(self_sink.clone()),
             Arc::clone(&room_arc),
+            admitted,
         )
         .await
         .map_err(|e| WsError(Arc::from(format!("room peer: {}", e.to_string()))))?;
@@ -260,6 +266,8 @@ impl WsMsg {
             ))
             .await
             .map_err(|e| format!("send answer: {e}"))?;
+
+        info!("new offer");
 
         // After initial offer/answer negotiation, attach any existing tracks from other peers
         room.attach_existing_tracks(conn_id, &peers).await;
@@ -352,11 +360,10 @@ async fn handle_socket(socket: WebSocket, _user_agent: String, state: ServerStat
                                         // The joiner may have disconnected while the host was
                                         // deciding; announcing it afterwards would broadcast a
                                         // `welcome` *after* its `disconnect` -> ghost member.
-                                        if let Some(username) = room
-                                            .peers
-                                            .get(&conn_id)
-                                            .map(|p| Arc::clone(&p.username))
-                                        {
+                                        let peer = room.peers.get(&conn_id).map(|p| {
+                                            (Arc::clone(&p.username), Arc::clone(p.value()))
+                                        });
+                                        if let Some((username, peer)) = peer {
                                             if let Err(e) =
                                                 answer_join(&joiner_tx, true, conn_id).await
                                             {
@@ -365,12 +372,23 @@ async fn handle_socket(socket: WebSocket, _user_agent: String, state: ServerStat
                                                 sync_room_member(&joiner_tx, &room, &conn_id).await
                                             {
                                                 warn!("sync room member: {e}");
-                                            } else if room.peers.contains_key(&conn_id) {
-                                                room.broadcast(conn_id, Message::text(
-                                                    sonic_rs::json!({
-                                                    "type": "welcome", "from": {"conn_id": conn_id, "username": username}})
-                                                    .to_string(),
-                                                ));
+                                            } else {
+                                                // Admit only after `join` and `sync` are
+                                                // queued: from now on tracks may attach to
+                                                // this peer, and its client must already know
+                                                // the room members.
+                                                peer.admit();
+                                                // The joiner may have joined with no local
+                                                // media, so it will not necessarily send an
+                                                // offer that would trigger attachment.
+                                                room.attach_existing_tracks(conn_id, &peer).await;
+                                                if room.peers.contains_key(&conn_id) {
+                                                    room.broadcast(conn_id, Message::text(
+                                                        sonic_rs::json!({
+                                                        "type": "welcome", "from": {"conn_id": conn_id, "username": username}})
+                                                        .to_string(),
+                                                    ));
+                                                }
                                             }
                                         } else {
                                             warn!("admit {conn_id}: peer already left");
