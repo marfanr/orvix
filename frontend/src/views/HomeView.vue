@@ -1,70 +1,55 @@
 <script setup lang="ts">
 import {
-  ArrowRightIcon,
-  BellIcon,
+  CalendarClockIcon,
   CalendarDaysIcon,
-  ClockIcon,
+  CalendarPlusIcon,
+  CheckIcon,
+  CopyIcon,
+  DoorOpenIcon,
+  HistoryIcon,
+  LogInIcon,
   LogOutIcon,
   PlusIcon,
-  SettingsIcon,
-  SparklesIcon,
+  RotateCcwIcon,
   UserIcon,
-  UsersIcon,
   VideoIcon,
 } from 'lucide-vue-next'
-import { onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import HeaderBrand from '@/components/HeaderBrand.vue'
 import NewMeetingPopup from '@/components/home/NewMeetingPopup.vue'
+import { api } from '@/lib/axios'
+import { listRecentMeetings, removeRecentMeeting, type RecentMeeting } from '@/lib/recentMeetings'
+import {
+  listScheduledMeetings,
+  removeScheduledMeeting,
+  type ScheduledMeeting,
+} from '@/lib/scheduledMeetings'
+import { userIdFromToken } from '@/lib/token'
 import { useAuthStore } from '@/stores/auth'
 import type { NewMeetingMode } from '@/types/video-call'
 
-const navigationItems = ref([
-  { name: 'Meet', icon: 'video', active: true },
-  { name: 'Contacts', icon: 'users', active: false },
-])
-
-const setActive = (name: string) => {
-  navigationItems.value = navigationItems.value.map((item) => ({
-    ...item,
-    active: item.name === name,
-  }))
-}
-
-const showProfileMenu = ref(false)
-const toggleProfileMenu = () => (showProfileMenu.value = !showProfileMenu.value)
-const closeProfileMenu = () => (showProfileMenu.value = false)
-const mode = ref<NewMeetingMode>('now')
 const router = useRouter()
 const auth = useAuthStore()
 
+const userId = computed(() => userIdFromToken(auth.accessToken))
+
+const personalAlias = computed(() => (userId.value ? `me-${userId.value}` : ''))
+const personalLink = computed(() =>
+  personalAlias.value ? `${window.location.origin}/meet/${personalAlias.value}` : '',
+)
+
+const accountOpen = ref(false)
+const toggleAccountMenu = () => (accountOpen.value = !accountOpen.value)
+const closeAccountMenu = () => (accountOpen.value = false)
+
 const handleLogout = async () => {
-  closeProfileMenu()
+  closeAccountMenu()
   await auth.logout()
   await router.push('/signin')
 }
 
-const todayLabel = new Date().toLocaleDateString('en-US', {
-  weekday: 'long',
-  month: 'long',
-  day: 'numeric',
-})
-
-const upcomingMeetings = ref([
-  { id: 1, title: 'Team Standup', time: '09:00', date: 'Today', participants: 8 },
-
-])
-
-const recentMeetings = ref<{
-  id: number,
-  title: string,
-  time: string,
-  date: string,
-  participants: number
-}[]>([
-  // { id: 4, title: 'Sprint Planning', time: '10:00', date: 'Yesterday', participants: 10 },
-])
-
+const mode = ref<NewMeetingMode>('now')
 const showNewMeeting = ref(false)
 const openNewMeeting = () => {
   showNewMeeting.value = true
@@ -81,301 +66,606 @@ const switchNewMeetingMode = (m: string) => {
   mode.value = m as NewMeetingMode
 }
 
-const onKeydown = (e: KeyboardEvent) => {
-  if (e.key !== 'Escape') return
-  else if (showProfileMenu.value) closeProfileMenu()
+const upcoming = ref<ScheduledMeeting[]>([])
+const upcomingError = ref('')
+const loadUpcoming = () => {
+  upcoming.value = listScheduledMeetings(userId.value)
 }
-onMounted(() => document.addEventListener('keydown', onKeydown))
-onUnmounted(() => {
-  document.removeEventListener('keydown', onKeydown)
+
+const sampleMeetings = computed<ScheduledMeeting[]>(() => {
+  const base = new Date()
+  const at = (addDays: number, hour: number) => {
+    const date = new Date(base)
+    date.setDate(date.getDate() + addDays)
+    date.setHours(hour, 0, 0, 0)
+    return date.toISOString()
+  }
+
+  return [
+    {
+      id: 'sample-standup',
+      alias: 'sample-daily-standup',
+      title: 'Daily standup',
+      startAt: at(0, base.getHours() + 1),
+      durationMin: 30,
+      timezone: 'Local time',
+      sample: true,
+    },
+    {
+      id: 'sample-design',
+      alias: 'sample-design-review',
+      title: 'Design review',
+      startAt: at(1, 10),
+      durationMin: 45,
+      timezone: 'Local time',
+      sample: true,
+    },
+    {
+      id: 'sample-sync',
+      alias: 'sample-weekly-sync',
+      title: 'Weekly sync',
+      startAt: at(2, 14),
+      durationMin: 60,
+      timezone: 'Local time',
+      sample: true,
+    },
+  ]
 })
 
-/* shared classes */
-const menuItemCls =
-  'flex w-full items-center gap-x-2.5 rounded-lg px-3 py-2 text-left text-sm text-gray-700 transition hover:bg-stone-100 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-primary'
+const shownMeetings = computed(() =>
+  upcoming.value.length ? upcoming.value : sampleMeetings.value,
+)
+const usingSamples = computed(() => upcoming.value.length === 0)
+
+const joinScheduled = async (meeting: ScheduledMeeting) => {
+  upcomingError.value = ''
+
+  if (meeting.sample) {
+    try {
+      await api.post('/room', {
+        title: meeting.title,
+        alias: meeting.alias,
+        owner_id: userId.value,
+        options: JSON.stringify({ waiting_room: false }),
+      })
+    } catch (err) {
+      const status = (err as { response?: { status?: number } }).response?.status
+      if (status !== 409) {
+        upcomingError.value = 'Could not open this meeting. Check your connection and try again.'
+        return
+      }
+    }
+  }
+
+  await router.push({ name: 'video-call', params: { id: meeting.alias } })
+}
+
+const removeScheduled = (meeting: ScheduledMeeting) => {
+  removeScheduledMeeting(userId.value, meeting.id)
+  loadUpcoming()
+}
+
+const recent = ref<RecentMeeting[]>([])
+const recentError = ref('')
+const loadRecent = () => {
+  recent.value = listRecentMeetings(userId.value)
+}
+
+const sampleRecent = computed<RecentMeeting[]>(() => {
+  const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString()
+  return [
+    {
+      alias: 'sample-sprint-planning',
+      title: 'Sprint planning',
+      lastOpenedAt: ago(90),
+      sample: true,
+    },
+    {
+      alias: 'sample-marketing-sync',
+      title: 'Marketing sync',
+      lastOpenedAt: ago(60 * 26),
+      sample: true,
+    },
+    {
+      alias: 'sample-retro',
+      title: 'Retro',
+      lastOpenedAt: ago(60 * 24 * 4),
+      sample: true,
+    },
+  ]
+})
+
+const shownRecent = computed(() => (recent.value.length ? recent.value : sampleRecent.value))
+const usingRecentSamples = computed(() => recent.value.length === 0)
+
+const rejoinRecent = async (meeting: RecentMeeting) => {
+  recentError.value = ''
+
+  if (meeting.sample) {
+    try {
+      await api.post('/room', {
+        title: meeting.title,
+        alias: meeting.alias,
+        owner_id: userId.value,
+        options: JSON.stringify({ waiting_room: false }),
+      })
+    } catch (err) {
+      const status = (err as { response?: { status?: number } }).response?.status
+      if (status !== 409) {
+        recentError.value = 'Could not open this meeting. Check your connection and try again.'
+        return
+      }
+    }
+  }
+
+  await router.push({ name: 'video-call', params: { id: meeting.alias } })
+}
+
+const removeRecent = (meeting: RecentMeeting) => {
+  removeRecentMeeting(userId.value, meeting.alias)
+  loadRecent()
+}
+
+const relativeTime = (iso: string) => {
+  const minutes = Math.round((Date.now() - Date.parse(iso)) / 60_000)
+  if (minutes < 1) return 'Just now'
+  if (minutes < 60) return `${minutes} min ago`
+
+  const hours = Math.round(minutes / 60)
+  if (hours < 24) return `${hours} hr ago`
+
+  const days = Math.round(hours / 24)
+  if (days === 1) return 'Yesterday'
+  if (days < 7) return `${days} days ago`
+
+  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+}
+
+const startOfDay = (date: Date) =>
+  new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime()
+
+const dayLabel = (iso: string) => {
+  const date = new Date(iso)
+  const offset = Math.round((startOfDay(date) - startOfDay(new Date())) / 86_400_000)
+  if (offset === 0) return 'Today'
+  if (offset === 1) return 'Tomorrow'
+  return date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
+}
+
+const timeRange = (meeting: ScheduledMeeting) => {
+  const start = new Date(meeting.startAt)
+  const end = new Date(start.getTime() + meeting.durationMin * 60_000)
+  const format = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' })
+  return `${format.format(start)}–${format.format(end)}`
+}
+
+const roomInput = ref('')
+const joinError = ref('')
+
+const extractRoomId = (value: string) => {
+  const trimmed = value.trim()
+  if (!trimmed) return ''
+
+  try {
+    const url = new URL(trimmed, window.location.origin)
+    const match = url.pathname.match(/\/meet\/([^/?#]+)/)
+    if (match?.[1]) return decodeURIComponent(match[1])
+  } catch {
+    return ''
+  }
+
+  return trimmed
+    .replace(/^\/+/, '')
+    .replace(/^meet\//, '')
+    .split(/[/?#]/)[0]
+}
+
+const joinRoom = async () => {
+  const id = extractRoomId(roomInput.value)
+  if (!id) {
+    joinError.value = 'Enter a meeting link or room code.'
+    return
+  }
+
+  joinError.value = ''
+  await router.push({ name: 'video-call', params: { id } })
+}
+
+const personalError = ref('')
+const personalReady = ref(false)
+const openingRoom = ref(false)
+const copied = ref(false)
+let copiedTimer: ReturnType<typeof setTimeout> | undefined
+
+const openPersonalRoom = async () => {
+  if (openingRoom.value) return
+  openingRoom.value = true
+  personalError.value = ''
+
+  const ready = await ensurePersonalRoom()
+  openingRoom.value = false
+  if (ready) {
+    await router.push({ name: 'video-call', params: { id: personalAlias.value } })
+  }
+}
+
+async function ensurePersonalRoom() {
+  if (personalReady.value) return true
+  if (!personalAlias.value || !userId.value) {
+    personalError.value = 'Your account details are unavailable. Sign in again and retry.'
+    return false
+  }
+
+  try {
+    await api.post('/room', {
+      title: 'Personal room',
+      alias: personalAlias.value,
+      owner_id: userId.value,
+      options: JSON.stringify({ waiting_room: false }),
+    })
+    personalReady.value = true
+    return true
+  } catch (err) {
+    const status = (err as { response?: { status?: number } }).response?.status
+    if (status === 409) {
+      personalReady.value = true
+      return true
+    }
+    personalError.value = 'Could not reach your room. Check your connection and try again.'
+    return false
+  }
+}
+
+const copyPersonalLink = async () => {
+  personalError.value = ''
+  if (!(await ensurePersonalRoom())) return
+
+  try {
+    await navigator.clipboard.writeText(personalLink.value)
+    copied.value = true
+    clearTimeout(copiedTimer)
+    copiedTimer = setTimeout(() => (copied.value = false), 1800)
+  } catch {
+    personalError.value = 'Clipboard access is unavailable in this browser.'
+  }
+}
+
+const onKeydown = (e: KeyboardEvent) => {
+  if (e.key === 'Escape' && accountOpen.value) closeAccountMenu()
+}
+
+onMounted(() => {
+  document.addEventListener('keydown', onKeydown)
+  loadUpcoming()
+  loadRecent()
+})
+onUnmounted(() => {
+  document.removeEventListener('keydown', onKeydown)
+  clearTimeout(copiedTimer)
+})
+
+const primaryBtnCls =
+  'inline-flex min-h-11 items-center justify-center gap-x-2 rounded-lg bg-primary px-5 text-sm font-semibold text-white transition hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary'
+const secondaryBtnCls =
+  'inline-flex min-h-11 items-center justify-center rounded-lg border border-stone-300 bg-white px-5 text-sm font-semibold text-gray-800 transition hover:bg-stone-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary'
+const smallSecondaryBtnCls =
+  'inline-flex min-h-9 items-center justify-center rounded-md border border-stone-300 bg-white px-3 text-sm font-medium text-gray-800 transition hover:bg-stone-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:opacity-60'
 </script>
 
 <template>
-  <div class="min-h-screen bg-primary-soft/30" @click="closeProfileMenu">
-    <header class="sticky top-0 z-40 border-b border-stone-200/80 bg-white/80 backdrop-blur-md">
-      <div class="mx-auto flex h-16 max-w-6xl items-center gap-2 px-4 sm:gap-3 sm:px-6 lg:px-8">
-        <div class="flex items-center gap-x-2.5">
+  <div class="flex min-h-dvh flex-col bg-primary-soft/30" @click="closeAccountMenu">
+    <header class="border-b border-stone-200 bg-white">
+      <div
+        class="mx-auto flex h-16 w-full max-w-5xl items-center justify-between gap-4 px-4 sm:px-6"
+      >
+        <RouterLink
+          to="/"
+          class="flex items-center gap-x-2.5 rounded-lg focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary"
+          aria-label="Orvix home"
+        >
           <HeaderBrand />
-        </div>
+        </RouterLink>
 
-        <nav class="ml-1 flex items-center gap-1 rounded-full bg-stone-100/80 p-1 sm:ml-3" aria-label="Primary">
-          <button v-for="item in navigationItems" :key="item.name" type="button" @click="setActive(item.name)"
-            :aria-current="item.active ? 'page' : undefined" :class="[
-              'rounded-full px-3 py-1.5 text-xs font-medium transition-all sm:px-4 sm:text-sm',
-              item.active
-                ? 'bg-white text-gray-900 shadow-sm'
-                : 'text-gray-500 hover:text-gray-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary',
-            ]">
-            {{ item.name }}
-          </button>
-        </nav>
-
-        <div class="ml-auto flex items-center gap-1 sm:gap-2">
-          <button type="button" aria-label="Notifications"
-            class="relative grid size-10 place-items-center rounded-full text-gray-600 transition hover:bg-stone-100 hover:text-gray-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
-            <BellIcon class="size-5" aria-hidden="true" />
-            <span class="absolute top-2.5 right-2.5 size-2 rounded-full bg-danger ring-2 ring-white"
-              aria-hidden="true"></span>
+        <div class="relative" @click.stop>
+          <button
+            type="button"
+            :aria-expanded="accountOpen"
+            aria-haspopup="true"
+            aria-label="Account menu"
+            class="flex min-h-10 items-center gap-x-2 rounded-lg px-2 text-sm font-medium text-gray-700 transition hover:bg-stone-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+            @click="toggleAccountMenu"
+          >
+            <span
+              class="grid size-8 place-items-center rounded-full bg-stone-100 text-gray-600"
+              aria-hidden="true"
+            >
+              <UserIcon class="size-4" />
+            </span>
+            <span class="hidden sm:inline">Account</span>
           </button>
 
-          <div class="relative" @click.stop>
-            <button type="button" @click="toggleProfileMenu" aria-haspopup="true" :aria-expanded="showProfileMenu"
-              aria-label="Account menu"
-              class="grid size-9 place-items-center rounded-full bg-primary text-sm font-semibold text-white transition hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
-              <span aria-hidden="true">A</span>
+          <div
+            v-if="accountOpen"
+            class="absolute right-0 z-50 mt-2 w-52 overflow-hidden rounded-lg border border-stone-200 bg-white p-1.5 shadow-lg"
+          >
+            <p class="px-3 py-2 text-xs text-gray-500">Signed in to Orvix</p>
+            <button
+              type="button"
+              class="flex w-full items-center gap-x-2.5 rounded-md px-3 py-2 text-left text-sm text-danger transition hover:bg-danger/5 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-primary"
+              @click="handleLogout"
+            >
+              <LogOutIcon class="size-4" aria-hidden="true" />
+              Log out
             </button>
-
-            <div v-if="showProfileMenu"
-              class="absolute right-0 z-50 mt-2 w-56 overflow-hidden rounded-xl border border-stone-200 bg-white p-1.5 shadow-xl">
-              <div class="px-3 py-2">
-                <p class="text-sm font-semibold text-gray-900">Account</p>
-                <p class="text-xs text-gray-500">Signed in to VidCall</p>
-              </div>
-              <div class="my-1 h-px bg-stone-100" aria-hidden="true"></div>
-              <button type="button" :class="menuItemCls" @click="closeProfileMenu">
-                <UserIcon class="size-4" aria-hidden="true" />
-                Profile
-              </button>
-              <button type="button" :class="menuItemCls" @click="closeProfileMenu">
-                <SettingsIcon class="size-4" aria-hidden="true" />
-                Settings
-              </button>
-              <div class="my-1 h-px bg-stone-100" aria-hidden="true"></div>
-              <button type="button" :class="[menuItemCls, 'text-danger hover:bg-danger/5']" @click="handleLogout">
-                <LogOutIcon class="size-4" aria-hidden="true" />
-                Logout
-              </button>
-            </div>
           </div>
         </div>
       </div>
     </header>
 
-    <main id="main" class="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-10 lg:px-8">
-      <!-- <div v-if="submitSuccess" role="status"
-        class="mb-6 flex items-start gap-x-3 rounded-xl border border-success/20 bg-white px-4 py-3 text-sm text-gray-700 shadow-sm">
-        <CheckCircle2Icon class="mt-0.5 size-5 shrink-0 text-success" aria-hidden="true" />
-        <p class="min-w-0 flex-1">{{ submitSuccess }}</p>
-        <button type="button" aria-label="Dismiss message"
-          class="grid size-6 shrink-0 place-items-center rounded-full text-gray-400 transition hover:bg-stone-100 hover:text-gray-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-          @click="submitSuccess = ''">
-          <XIcon class="size-4" aria-hidden="true" />
-        </button>
-      </div> -->
+    <main id="main" class="mx-auto w-full max-w-5xl flex-1 px-4 py-10 sm:px-6 sm:py-14">
+      <div
+        class="grid gap-10"
+        :class="personalAlias ? 'lg:grid-cols-[minmax(0,1fr)_21rem] lg:gap-14' : ''"
+      >
+        <div>
+          <h1 class="font-heading text-3xl font-semibold tracking-tight text-gray-900 sm:text-4xl">
+            Start or join a meeting
+          </h1>
+          <p class="mt-3 max-w-md text-base leading-relaxed text-gray-600">
+            Create a room and share the link, or enter a room code to join a call already in
+            progress.
+          </p>
 
-      <section
-        class="relative overflow-hidden rounded-3xl bg-primary px-5 py-8 text-white shadow-xl shadow-primary/20 sm:px-8 sm:py-10 lg:px-10">
-        <div class="pointer-events-none absolute -top-24 -right-16 size-64 rounded-full bg-white/10 blur-2xl"
-          aria-hidden="true"></div>
-        <div class="pointer-events-none absolute -bottom-28 left-1/3 size-56 rounded-full bg-primary-hover/30 blur-2xl"
-          aria-hidden="true"></div>
+          <button type="button" :class="[primaryBtnCls, 'mt-7']" @click="openNewMeeting">
+            <PlusIcon class="size-4" aria-hidden="true" />
+            New meeting
+          </button>
 
-        <div class="relative flex flex-col gap-8 lg:flex-row lg:items-end lg:justify-between">
-          <div class="max-w-xl">
-            <p class="flex items-center gap-x-2 text-xs font-medium tracking-wide text-white/70 uppercase">
-              <SparklesIcon class="size-4" aria-hidden="true" />
-              {{ todayLabel }}
-            </p>
-            <h1 class="mt-3 font-heading text-3xl font-semibold tracking-tight sm:text-4xl">
-              Ready when you are.
-            </h1>
-            <p class="mt-3 text-sm leading-relaxed text-white/80 sm:text-base">
-              Start an instant call or plan one for later. Your room, your link, and everyone
-              together in a few clicks.
-            </p>
+          <section class="mt-10 border-t border-stone-300/70 pt-8" aria-labelledby="join-title">
+            <h2
+              id="join-title"
+              class="flex items-center gap-x-2 text-sm font-semibold text-gray-900"
+            >
+              <LogInIcon class="size-4 text-gray-400" aria-hidden="true" />
+              Join a meeting
+            </h2>
+            <p class="mt-1 text-sm text-gray-600">Paste the invite link or type the room code.</p>
 
-            <div class="mt-6 flex flex-wrap items-center gap-2.5">
-              <button type="button"
-                class="inline-flex items-center gap-x-2 rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-primary shadow-sm transition hover:bg-white/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
-                @click="openNewMeeting">
-                <PlusIcon class="size-4" aria-hidden="true" />
-                New meeting
+            <form class="mt-4 flex flex-col gap-2 sm:flex-row" @submit.prevent="joinRoom">
+              <label for="room-code" class="sr-only">Meeting link or room code</label>
+              <input
+                id="room-code"
+                v-model="roomInput"
+                type="text"
+                name="room-code"
+                autocomplete="off"
+                spellcheck="false"
+                placeholder="Paste a link or room code"
+                class="h-11 min-w-0 flex-1 rounded-lg border border-stone-300 bg-white px-3 text-sm text-gray-900 placeholder:text-gray-500 focus:border-primary focus:ring-2 focus:ring-primary/20 focus:outline-none"
+                :aria-invalid="!!joinError"
+                :aria-describedby="joinError ? 'room-code-error' : undefined"
+              />
+              <button type="submit" :class="[secondaryBtnCls, 'gap-x-2']">
+                <LogInIcon class="size-4" aria-hidden="true" />
+                Join
               </button>
-              <button type="button"
-                class="inline-flex items-center gap-x-2 rounded-xl bg-white/10 px-4 py-2.5 text-sm font-medium text-white ring-1 ring-white/25 transition hover:bg-white/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
-                @click="openScheduledMeeting">
-                <CalendarDaysIcon class="size-4" aria-hidden="true" />
+            </form>
+
+            <p v-if="joinError" id="room-code-error" role="alert" class="mt-2 text-sm text-danger">
+              {{ joinError }}
+            </p>
+          </section>
+
+          <section class="mt-10 border-t border-stone-300/70 pt-8" aria-labelledby="recent-title">
+            <div class="flex items-baseline justify-between gap-x-3">
+              <h2
+                id="recent-title"
+                class="flex items-center gap-x-2 text-sm font-semibold text-gray-900"
+              >
+                <HistoryIcon class="size-4 text-gray-400" aria-hidden="true" />
+                Recent meetings
+              </h2>
+              <span v-if="usingRecentSamples" class="text-xs text-gray-500">Sample</span>
+            </div>
+            <p class="mt-1 text-xs text-gray-500">
+              {{
+                usingRecentSamples
+                  ? 'Sample history. Rooms you join will replace these.'
+                  : 'Rooms you joined on this device.'
+              }}
+            </p>
+
+            <ul class="mt-4 divide-y divide-stone-200 border-y border-stone-200">
+              <li
+                v-for="meeting in shownRecent"
+                :key="meeting.alias"
+                class="flex flex-wrap items-center gap-x-3 gap-y-2 py-3"
+              >
+                <span
+                  class="grid size-9 shrink-0 place-items-center rounded-lg bg-stone-100 text-gray-500"
+                  aria-hidden="true"
+                >
+                  <HistoryIcon class="size-4" />
+                </span>
+                <div class="min-w-0 flex-1">
+                  <h3 class="truncate text-sm font-semibold text-gray-900">
+                    {{ meeting.title }}
+                  </h3>
+                  <p class="mt-0.5 text-xs text-gray-500">
+                    {{ relativeTime(meeting.lastOpenedAt) }}
+                  </p>
+                </div>
+                <div class="ml-auto flex shrink-0 items-center gap-x-1">
+                  <button
+                    type="button"
+                    :class="[smallSecondaryBtnCls, 'gap-x-1.5']"
+                    :aria-label="`Rejoin ${meeting.title}`"
+                    @click="rejoinRecent(meeting)"
+                  >
+                    <RotateCcwIcon class="size-3.5" aria-hidden="true" />
+                    Rejoin
+                  </button>
+                  <button
+                    v-if="!meeting.sample"
+                    type="button"
+                    class="inline-flex min-h-9 items-center rounded-md px-2 text-sm font-medium text-gray-500 transition hover:text-danger focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+                    :aria-label="`Remove ${meeting.title} from history`"
+                    @click="removeRecent(meeting)"
+                  >
+                    Remove
+                  </button>
+                </div>
+              </li>
+            </ul>
+
+            <p v-if="recentError" role="alert" class="mt-2 text-sm text-danger">
+              {{ recentError }}
+            </p>
+          </section>
+        </div>
+
+        <aside
+          v-if="personalAlias"
+          class="border-t border-stone-300/70 pt-8 lg:border-t-0 lg:border-l lg:pt-1 lg:pl-10"
+        >
+          <section aria-labelledby="upcoming-title">
+            <div class="flex items-baseline justify-between gap-x-3">
+              <h2
+                id="upcoming-title"
+                class="flex items-center gap-x-2 text-sm font-semibold text-gray-900"
+              >
+                <CalendarClockIcon class="size-4 text-gray-400" aria-hidden="true" />
+                Upcoming meetings
+              </h2>
+              <button
+                type="button"
+                class="inline-flex items-center gap-x-1.5 rounded-md text-sm font-medium text-primary transition hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+                @click="openScheduledMeeting"
+              >
+                <CalendarPlusIcon class="size-4" aria-hidden="true" />
                 Schedule
               </button>
             </div>
-          </div>
+            <p class="mt-1 text-xs leading-relaxed text-gray-500">
+              {{
+                usingSamples
+                  ? 'Sample meetings. Schedule your own to replace them.'
+                  : 'Scheduled meetings are stored on this device.'
+              }}
+            </p>
 
-          <div class="hidden w-64 shrink-0 rounded-2xl bg-white/10 p-4 ring-1 ring-white/20 backdrop-blur-sm lg:block">
-            <p class="text-[11px] font-medium tracking-wide text-white/60 uppercase">Next up</p>
-            <template v-if="upcomingMeetings[0]">
-              <p class="mt-2 truncate text-sm font-semibold">
-                {{ upcomingMeetings[0].title }}
-              </p>
-              <p class="mt-1 flex items-center gap-x-1.5 text-xs text-white/70">
-                <ClockIcon class="size-3.5" aria-hidden="true" />
-                {{ upcomingMeetings[0].date }} · {{ upcomingMeetings[0].time }}
-              </p>
-              <p class="mt-3 flex items-center gap-x-1.5 text-xs text-white/70">
-                <UsersIcon class="size-3.5" aria-hidden="true" />
-                {{ upcomingMeetings[0].participants }} participants
-              </p>
-            </template>
-            <p v-else class="mt-2 text-sm text-white/70">Nothing scheduled yet.</p>
-          </div>
-        </div>
-      </section>
-
-      <div class="mt-8 grid gap-8 lg:grid-cols-[minmax(0,1fr)_18rem] lg:items-start">
-        <div class="min-w-0 space-y-10">
-          <section id="upcoming" aria-labelledby="upcoming-title">
-            <div class="flex flex-wrap items-end justify-between gap-3">
-              <div>
-                <h2 id="upcoming-title" class="font-heading text-xl font-semibold text-gray-900">
-                  Upcoming meetings
-                </h2>
-                <p class="mt-1 text-sm text-gray-500">Your next calls, all in one place.</p>
-              </div>
-              <span class="rounded-full bg-white px-2.5 py-1 text-xs font-medium text-gray-500 ring-1 ring-stone-200">
-                {{ upcomingMeetings.length }} scheduled
-              </span>
-            </div>
-
-            <div v-if="upcomingMeetings.length" class="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-              <article v-for="meeting in upcomingMeetings" :key="meeting.id"
-                class="group flex flex-col rounded-2xl border border-stone-200 bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-md">
-                <div class="flex items-center justify-between gap-2">
-                  <span
-                    class="inline-flex items-center gap-x-1.5 rounded-full bg-primary/10 px-2.5 py-1 text-[11px] font-semibold text-primary">
-                    <CalendarDaysIcon class="size-3.5" aria-hidden="true" />
-                    {{ meeting.date }}
-                  </span>
-                  <span class="flex items-center gap-x-1 text-xs text-gray-400">
-                    <UsersIcon class="size-3.5" aria-hidden="true" />
-                    {{ meeting.participants }}
-                  </span>
-                </div>
-
-                <h3 class="mt-4 truncate text-base font-semibold text-gray-900">
-                  {{ meeting.title }}
-                </h3>
-                <p class="mt-1 flex items-center gap-x-1.5 text-sm text-gray-500">
-                  <ClockIcon class="size-4" aria-hidden="true" />
-                  {{ meeting.time }}
-                </p>
-
+            <ul class="mt-4 divide-y divide-stone-200 border-y border-stone-200">
+              <li
+                v-for="meeting in shownMeetings"
+                :key="meeting.id"
+                class="flex items-start gap-x-3 py-3"
+              >
                 <span
-                  class="mt-4 inline-flex items-center gap-x-1 text-xs font-medium text-primary opacity-0 transition group-hover:opacity-100">
-                  View details
-                  <ArrowRightIcon class="size-3.5" aria-hidden="true" />
+                  class="mt-0.5 grid size-9 shrink-0 place-items-center rounded-lg bg-stone-100 text-gray-500"
+                  aria-hidden="true"
+                >
+                  <CalendarDaysIcon class="size-4" />
                 </span>
-              </article>
-            </div>
-
-            <div v-else
-              class="mt-4 flex flex-col items-center justify-center rounded-2xl border border-dashed border-stone-300 bg-white/60 px-6 py-10 text-center">
-              <span class="grid size-11 place-items-center rounded-full bg-primary/10 text-primary">
-                <CalendarDaysIcon class="size-5" aria-hidden="true" />
-              </span>
-              <p class="mt-3 text-sm font-medium text-gray-800">No meetings scheduled</p>
-              <p class="mt-1 text-sm text-gray-500">Plan one and it will show up here.</p>
-              <button type="button"
-                class="mt-4 inline-flex items-center gap-x-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-white transition hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-                @click="openScheduledMeeting">
-                <PlusIcon class="size-4" aria-hidden="true" />
-                Schedule a meeting
-              </button>
-            </div>
-          </section>
-
-          <section aria-labelledby="recent-title">
-            <div>
-              <h2 id="recent-title" class="font-heading text-xl font-semibold text-gray-900">
-                Recent
-              </h2>
-              <p class="mt-1 text-sm text-gray-500">Jump back into a room you used before.</p>
-            </div>
-
-            <ul
-              class="mt-4 divide-y divide-stone-100 overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-sm">
-              <li v-for="meeting in recentMeetings" :key="meeting.id">
-                <div class="flex items-center gap-x-3 px-4 py-3.5 transition hover:bg-stone-50 sm:px-5">
-                  <span class="grid size-11 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary"
-                    aria-hidden="true">
-                    <VideoIcon class="size-5" />
-                  </span>
-
-                  <div class="min-w-0 flex-1">
-                    <p class="truncate text-sm font-medium text-gray-900">{{ meeting.title }}</p>
-                    <p class="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs text-gray-500">
-                      <span>{{ meeting.date }}</span>
-                      <span aria-hidden="true">·</span>
-                      <span>{{ meeting.time }}</span>
-                      <span aria-hidden="true">·</span>
-                      <span>{{ meeting.participants }} participants</span>
-                    </p>
+                <div class="min-w-0 flex-1">
+                  <p class="text-[11px] font-medium text-gray-500">
+                    {{ dayLabel(meeting.startAt) }} · {{ timeRange(meeting) }} ·
+                    {{ meeting.durationMin }} min
+                  </p>
+                  <div class="mt-1 flex items-start justify-between gap-x-3">
+                    <h3 class="min-w-0 truncate text-sm font-semibold text-gray-900">
+                      {{ meeting.title }}
+                    </h3>
+                    <button
+                      type="button"
+                      class="-mt-0.5 shrink-0 rounded-md px-2 py-0.5 text-xs font-medium text-primary transition hover:bg-primary/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+                      :aria-label="`Join ${meeting.title}`"
+                      @click="joinScheduled(meeting)"
+                    >
+                      Join
+                    </button>
                   </div>
-
-                  <span class="shrink-0 text-gray-300" aria-hidden="true">
-                    <ChevronRightIcon class="size-4" />
-                  </span>
+                  <button
+                    v-if="!meeting.sample"
+                    type="button"
+                    class="mt-1 rounded-md text-xs text-gray-500 transition hover:text-danger focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+                    :aria-label="`Remove ${meeting.title} from the list`"
+                    @click="removeScheduled(meeting)"
+                  >
+                    Remove
+                  </button>
                 </div>
-              </li>
-
-              <li v-if="!recentMeetings.length" class="px-5 py-8 text-center text-sm text-gray-500">
-                No recent meetings yet.
               </li>
             </ul>
+
+            <p v-if="upcomingError" role="alert" class="mt-2 text-xs text-danger">
+              {{ upcomingError }}
+            </p>
           </section>
-        </div>
 
-        <aside class="space-y-4 lg:sticky lg:top-24">
-          <div class="rounded-2xl border border-stone-200 bg-white p-5 shadow-sm">
-            <div class="flex items-center gap-x-2.5">
-              <span class="grid size-9 place-items-center rounded-lg bg-primary/10 text-primary">
-                <VideoIcon class="size-4" aria-hidden="true" />
-              </span>
-              <h2 class="text-sm font-semibold text-gray-900">Your personal room</h2>
+          <section class="mt-8 border-t border-stone-300/70 pt-8" aria-labelledby="room-title">
+            <h2
+              id="room-title"
+              class="flex items-center gap-x-2 text-sm font-semibold text-gray-900"
+            >
+              <VideoIcon class="size-4 text-gray-400" aria-hidden="true" />
+              Your room
+            </h2>
+            <p class="mt-1 text-sm leading-relaxed text-gray-600">
+              A room that stays yours. Share the link so people can drop in without booking a time.
+            </p>
+
+            <p class="mt-5 text-xs text-gray-500">Room code</p>
+            <p class="mt-1 truncate font-mono text-xs text-gray-700" :title="personalLink">
+              {{ personalAlias }}
+            </p>
+
+            <div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+              <button
+                type="button"
+                class="inline-flex min-h-9 items-center gap-x-1.5 rounded-md px-3 text-sm font-medium text-primary transition hover:bg-primary/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+                @click="copyPersonalLink"
+              >
+                <component
+                  :is="copied ? CheckIcon : CopyIcon"
+                  class="size-4"
+                  :class="copied ? 'text-success' : ''"
+                  aria-hidden="true"
+                />
+                <span aria-live="polite">{{ copied ? 'Link copied' : 'Copy link' }}</span>
+              </button>
+
+              <button
+                type="button"
+                :class="[smallSecondaryBtnCls, 'gap-x-1.5']"
+                :disabled="openingRoom"
+                :aria-busy="openingRoom"
+                @click="openPersonalRoom"
+              >
+                <DoorOpenIcon class="size-3.5" aria-hidden="true" />
+                {{ openingRoom ? 'Opening…' : 'Open room' }}
+              </button>
             </div>
 
-            <p class="mt-3 text-xs leading-relaxed text-gray-500">
-              Share this ID when someone wants to join you directly.
+            <p v-if="personalError" role="alert" class="mt-3 text-sm text-danger">
+              {{ personalError }}
             </p>
-            <p
-              class="mt-2 overflow-hidden rounded-lg bg-stone-50 px-3 py-2 font-mono text-xs text-gray-700 break-all ring-1 ring-stone-100">
-              <!-- {{ personalId }} -->
-              ss
-            </p>
-
-            <button type="button"
-              class="mt-4 inline-flex w-full items-center justify-center gap-x-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-white transition hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-              @click="openNewMeeting">
-              <PlusIcon class="size-4" aria-hidden="true" />
-              Start a meeting
-            </button>
-          </div>
-
-          <div class="rounded-2xl border border-stone-200 bg-white p-5 shadow-sm">
-            <div class="flex items-center gap-x-2.5">
-              <span class="grid size-9 place-items-center rounded-lg bg-stone-100 text-gray-600">
-                <CalendarDaysIcon class="size-4" aria-hidden="true" />
-              </span>
-              <h2 class="text-sm font-semibold text-gray-900">Plan ahead</h2>
-            </div>
-            <p class="mt-3 text-xs leading-relaxed text-gray-500">
-              Pick a time, set a duration, and share the invite when you are ready.
-            </p>
-            <button type="button"
-              class="mt-4 inline-flex w-full items-center justify-center gap-x-2 rounded-xl border border-stone-200 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 transition hover:border-primary/40 hover:text-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-              @click="openScheduledMeeting">
-              <CalendarDaysIcon class="size-4" aria-hidden="true" />
-              Schedule a meeting
-            </button>
-          </div>
+          </section>
         </aside>
       </div>
     </main>
 
-    <NewMeetingPopup @close="closeNewMeeting" :is_open="showNewMeeting" :mode="mode"
-      @switch-new-meeting-mode="switchNewMeetingMode" />
+    <footer class="mx-auto w-full max-w-5xl px-4 pb-8 sm:px-6">
+      <p class="border-t border-stone-300/70 pt-5 text-xs text-gray-500">
+        Orvix is self-hosted. Your meeting media stays on your own server.
+      </p>
+    </footer>
+
+    <NewMeetingPopup
+      :is_open="showNewMeeting"
+      :mode="mode"
+      @close="closeNewMeeting"
+      @scheduled="loadUpcoming"
+      @switch-new-meeting-mode="switchNewMeetingMode"
+    />
   </div>
 </template>

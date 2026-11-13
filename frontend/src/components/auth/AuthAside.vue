@@ -1,44 +1,48 @@
+<script setup lang="ts">
+import {
+  CircleDotIcon,
+  ScreenShareIcon,
+  ShieldCheckIcon,
+  UsersIcon,
+  WebcamIcon,
+} from 'lucide-vue-next'
+
+const features = [
+  { icon: UsersIcon, label: 'Multi-party WebRTC rooms' },
+  { icon: ScreenShareIcon, label: 'Screen sharing, chat, and reactions' },
+  { icon: ShieldCheckIcon, label: 'Waiting room and join requests' },
+  { icon: CircleDotIcon, label: 'Server-side recording' },
+]
+</script>
+
 <template>
   <section
-    class="relative m-3 hidden flex-col justify-between overflow-hidden bg-brown-ribbon-700 text-white p-8 lg:flex rounded-2xl w-5/6"
+    class="m-3 hidden flex-col justify-between overflow-hidden rounded-2xl bg-brown-ribbon-700 p-8 text-white lg:flex"
   >
     <div class="flex items-center gap-2 text-xl font-semibold">
-      <WebcamIcon aria-hidden="true" />
+      <WebcamIcon class="size-5" aria-hidden="true" />
       Orvix
     </div>
 
-    <!-- decorative -->
-    <div
-      class="pointer-events-none absolute right-6 top-6 grid grid-cols-3 gap-1.5 opacity-40 items-center"
-      aria-hidden="true"
-    >
-      <span
-        v-for="i in 3"
-        :key="i"
-        class="h-3 w-0.5 bg-white/70"
-        :class="i == 2 ? 'h-6' : ''"
-      ></span>
-    </div>
-    <div
-      class="pointer-events-none absolute bottom-6 left-6 grid grid-cols-4 gap-2 opacity-30"
-      aria-hidden="true"
-    >
-      <span v-for="i in 6" :key="i" class="size-1 rounded-full bg-white"></span>
-    </div>
+    <div>
+      <p class="font-heading text-3xl font-semibold tracking-tight">Self-hosted video meetings</p>
+      <p class="mt-4 max-w-sm text-sm leading-relaxed text-white/80">
+        Run meetings on your own server. Multi-party WebRTC, screen sharing, and chat without a
+        third-party meeting service.
+      </p>
 
-    <div class="text-left h-1/2">
-      <p class="text-3xl font-semibold tracking-tight" style="font-family: var(--font-heading)">
-        Self-Hosted Video Meetings
-      </p>
-      <p class="mt-6 max-w-sm text-sm leading-relaxed">
-        Your own private video conferencing platform. Full control, end-to-end encryption, and no
-        third-party dependencies.
-      </p>
-      <div class="mt-5 flex justify-center gap-1.5" aria-hidden="true">
-        <span class="size-1 rounded-full bg-white/40"></span>
-        <span class="h-1 w-5 rounded-full bg-white/80"></span>
-        <span class="size-1 rounded-full bg-white/40"></span>
-      </div>
+      <ul class="mt-8 space-y-3">
+        <li
+          v-for="feature in features"
+          :key="feature.label"
+          class="flex items-center gap-x-3 text-sm text-white/85"
+        >
+          <span class="grid size-8 shrink-0 place-items-center rounded-lg bg-white/10">
+            <component :is="feature.icon" class="size-4" aria-hidden="true" />
+          </span>
+          {{ feature.label }}
+        </li>
+      </ul>
     </div>
   </section>
 </template>

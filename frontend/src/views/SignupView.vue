@@ -4,14 +4,16 @@ import InputElement from '@/components/ui/InputElement.vue'
 import { api } from '@/lib/axios'
 import { useAuthStore } from '@/stores/auth'
 import { toTypedSchema } from '@vee-validate/zod'
-import { WebcamIcon } from 'lucide-vue-next'
 import { useField, useForm } from 'vee-validate'
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import * as z from 'zod'
 
 const router = useRouter()
+const auth = useAuthStore()
 const loading = ref(false)
+const submitError = ref('')
+const currentYear = new Date().getFullYear()
 
 const { handleSubmit, setFieldError } = useForm({
   validationSchema: toTypedSchema(
@@ -21,7 +23,7 @@ const { handleSubmit, setFieldError } = useForm({
         .min(3, 'Username must be at least 3 characters')
         .max(32, 'Username must be at most 32 characters'),
       email: z.string().min(1, 'Email is required').email('Please enter a valid email address'),
-      password: z.string().min(1, 'Password is required'),
+      password: z.string().min(8, 'Password must be at least 8 characters'),
     }),
   ),
 })
@@ -33,6 +35,7 @@ const { value: password, errorMessage: passwordError } = useField<string>('passw
 const onSubmit = handleSubmit(async (values) => {
   if (loading.value) return
   loading.value = true
+  submitError.value = ''
   try {
     await api.post('/user/', {
       username: values.username,
@@ -45,29 +48,27 @@ const onSubmit = handleSubmit(async (values) => {
       password: values.password,
     })
 
-    const auth = useAuthStore()
     const token = res.data?.token
-    if (token) {
-      auth.setAccessToken(token)
-    } else {
-      setFieldError('email', 'Unexpected server response')
+    if (!token) {
+      submitError.value = 'Account created, but sign-in failed. Try signing in instead.'
       return
     }
 
+    auth.setAccessToken(token)
     await router.push('/')
   } catch (err) {
     const axiosErr = err as { response?: { data?: { error?: string }; status?: number } }
-    const message = axiosErr.response?.data?.error || 'Something went wrong'
+    const status = axiosErr.response?.status
+    const message = axiosErr.response?.data?.error
+
     if (message === 'username already exists') {
       setFieldError('username', message)
-    } else if (message === 'email already exists' || axiosErr.response?.status === 409) {
-      setFieldError('email', message)
-    } else if (axiosErr.response?.status === 422) {
-      setFieldError('username', message)
-      setFieldError('email', message)
-      setFieldError('password', message)
+    } else if (message === 'email already exists' || status === 409) {
+      setFieldError('email', message || 'Email already exists')
+    } else if (status === 422) {
+      submitError.value = message || 'Check your details and try again.'
     } else {
-      setFieldError('email', message)
+      submitError.value = message || 'Something went wrong. Please try again.'
     }
   } finally {
     loading.value = false
@@ -83,13 +84,13 @@ const onSubmit = handleSubmit(async (values) => {
       <AuthAside />
 
       <!-- Right panel -->
-      <section class="flex flex-col justify-between p-6 sm:p-10">
-        <div></div>
-
-        <div class="mx-auto w-full max-w-sm">
+      <section class="flex flex-col p-6 sm:p-10">
+        <div class="mx-auto my-auto w-full max-w-sm">
           <div class="text-center">
             <h1 class="text-2xl font-semibold tracking-tight">Create your account</h1>
-            <p class="mt-2 text-sm text-slate-600">Enter your email below to create your account</p>
+            <p class="mt-2 text-sm text-slate-600">
+              Enter your details below to create your account
+            </p>
           </div>
 
           <form class="mt-6 flex flex-col gap-3" @submit="onSubmit" novalidate>
@@ -111,11 +112,15 @@ const onSubmit = handleSubmit(async (values) => {
 
             <InputElement
               v-model="password"
-              label="password"
+              label="Password"
               type="password"
-              autocomplete="password"
+              autocomplete="new-password"
               :error="passwordError"
             />
+
+            <p v-if="submitError" role="alert" class="text-sm text-danger">
+              {{ submitError }}
+            </p>
 
             <button
               type="submit"
@@ -123,19 +128,19 @@ const onSubmit = handleSubmit(async (values) => {
               :aria-busy="loading"
               class="mt-2 h-11 w-full rounded-lg bg-primary text-sm font-semibold text-white transition hover:bg-primary-hover active:scale-[0.99] disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
             >
-              {{ loading ? 'Signing up...' : 'Sign Up' }}
+              {{ loading ? 'Creating account...' : 'Create account' }}
             </button>
           </form>
 
           <p class="mt-6 text-center text-sm text-slate-700">
             Already have an account?
-            <a href="/signin" class="font-semibold text-slate-900 hover:underline">Sign In</a>
+            <RouterLink to="/signin" class="font-semibold text-slate-900 hover:underline">
+              Sign in
+            </RouterLink>
           </p>
         </div>
 
-        <div class="mt-10 flex justify-between text-xs text-slate-500">
-          <span>Copyright 2026</span>
-        </div>
+        <p class="mt-10 text-xs text-slate-500">© {{ currentYear }} Orvix</p>
       </section>
     </div>
   </main>
