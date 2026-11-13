@@ -108,6 +108,11 @@ function onParticipantsClick() {
   membersPanel.toggle()
 }
 
+function onAiInviteClick() {
+  console.log("invite ai")
+  emit('send-control', JSON.stringify({ type: 'invite_ai' }))
+}
+
 interface MenuItem {
   key: string
   label: string
@@ -147,6 +152,7 @@ const menuItems = computed<MenuItem[]>(() => [
     label: 'invite AI',
     description: 'invite AI into this room',
     icon: BotIcon,
+    onSelect: onAiInviteClick
   }
 ])
 

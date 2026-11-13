@@ -105,7 +105,13 @@ export function useVideoCallRoom(getRoomParam: () => string | string[] | undefin
     callStore.addNewMessage(msg, from)
   }
 
-  const webrtc = useWebRTC(signaling.send, onRemoteTrack, handleControlChannel, handleIncomingChat, signaling.sendOffer)
+  const webrtc = useWebRTC(
+    signaling.send,
+    onRemoteTrack,
+    handleControlChannel,
+    handleIncomingChat,
+    signaling.sendOffer,
+  )
   const media = useLocalMedia(participants)
 
   const sendChat = (msg: string, target: string) => {

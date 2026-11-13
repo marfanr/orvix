@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: AGPL-3.0
 
+use crate::ai::assistant;
 use crate::peer::constant::{FORWARD_RID, PLI_WINDOW};
 use crate::peer::driver::PeerDriver;
 use crate::sfu::svc::parse_vp9;
@@ -20,6 +21,7 @@ use validator::ValidateLength;
 pub enum ControlMessage {
     Record,
     CodecChanged { codec: String, mime: String },
+    InviteAi,
 }
 
 #[derive(Deserialize, Debug)]
@@ -40,6 +42,7 @@ pub struct DataMessageResponse {
 impl PeerDriver {
     async fn handle_control_message(&mut self, conn_id: Uuid, msg: RTCDataChannelMessage) {
         let json = sonic_rs::from_slice::<ControlMessage>(&msg.data);
+        // info!("json {:#?}", json);
         match json {
             Ok(ControlMessage::Record) => {
                 info!("conn {conn_id}: received record control command via data channel");
@@ -112,6 +115,10 @@ impl PeerDriver {
                         )
                         .await;
                 }
+            }
+            Ok(ControlMessage::InviteAi) => {
+                info!("invite ai on data chanel");
+                assistant::join_to_room(self.room.clone());
             }
             Err(e) => {
                 debug!("conn {conn_id}: control parse err: {e}");
