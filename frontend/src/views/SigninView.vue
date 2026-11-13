@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import AuthAside from '@/components/auth/AuthAside.vue'
 import InputElement from '@/components/ui/InputElement.vue'
 import { api } from '@/lib/axios'
 import { useAuthStore } from '@/stores/auth'
@@ -61,46 +62,9 @@ const onSubmit = handleSubmit(async (values) => {
 <template>
   <main id="main" class="min-h-screen w-full bg-gray-100 p-4 sm:p-8 text-gray-900">
     <div
-      class="mx-auto grid min-h-[calc(100vh-2rem)] sm:min-h-[calc(100vh-4rem)] max-w-6xl grid-cols-1 overflow-hidden bg-white lg:grid-cols-2"
+      class="mx-auto grid min-h-[calc(100vh-2rem)] sm:min-h-[calc(100vh-4rem)] max-w-5xl grid-cols-1 overflow-hidden bg-white lg:grid-cols-2 rounded-4xl"
     >
-      <!-- Left panel -->
-      <section
-        class="relative m-3 hidden flex-col justify-between overflow-hidden bg-primary p-8 text-white lg:flex"
-      >
-        <div class="flex items-center gap-2 text-xl font-semibold">
-          <WebcamIcon aria-hidden="true" />
-          Orvix
-        </div>
-
-        <!-- decorative -->
-        <div
-          class="pointer-events-none absolute right-6 top-6 grid grid-cols-3 gap-1.5 opacity-40"
-          aria-hidden="true"
-        >
-          <span v-for="i in 6" :key="i" class="h-4 w-0.5 bg-white/70"></span>
-        </div>
-        <div
-          class="pointer-events-none absolute bottom-6 left-6 grid grid-cols-4 gap-2 opacity-30"
-          aria-hidden="true"
-        >
-          <span v-for="i in 6" :key="i" class="size-1 rounded-full bg-white"></span>
-        </div>
-
-        <div class="text-center">
-          <p class="text-3xl font-semibold tracking-tight" style="font-family: var(--font-heading)">
-            Self-Hosted Video Meetings
-          </p>
-          <p class="mx-auto mt-3 max-w-sm text-xs leading-relaxed text-white/80">
-            Your own private video conferencing platform. Full control, end-to-end encryption, and
-            no third-party dependencies.
-          </p>
-          <div class="mt-5 flex justify-center gap-1.5" aria-hidden="true">
-            <span class="size-1 rounded-full bg-white/40"></span>
-            <span class="h-1 w-5 rounded-full bg-white/80"></span>
-            <span class="size-1 rounded-full bg-white/40"></span>
-          </div>
-        </div>
-      </section>
+      <AuthAside />
 
       <!-- Right panel -->
       <section class="flex flex-col justify-between p-6 sm:p-10">
