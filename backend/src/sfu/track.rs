@@ -13,10 +13,11 @@ use rtc::rtp_transceiver::RTCRtpSenderId;
 use rtc::rtp_transceiver::rtp_sender::{
     RTCRtpCodec, RTCRtpCodingParameters, RTCRtpEncodingParameters, RtpCodecKind,
 };
-use std::sync::Arc;
+use sonic_rs::Serialize;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, atomic};
 use tokio::sync::mpsc;
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 use uuid::Uuid;
 
 /// One subscriber leg of a published track. `sender_id` refers to the `RTCRtpSender`
@@ -34,6 +35,14 @@ pub struct RecordingHandle {
     pub tx: mpsc::Sender<Packet>,
 }
 
+#[derive(Debug, Serialize)]
+struct VoiceActivity {
+    #[serde(rename = "type")]
+    pub event_type: &'static str,
+    pub from: Uuid,
+    pub active: bool,
+}
+
 pub struct PublishedTrack {
     pub publisher: Uuid,
     pub kind: RtpCodecKind,
@@ -45,6 +54,7 @@ pub struct PublishedTrack {
     pub simulcast_layers: DashMap<String, u32>,
     pub sender_peer: Arc<RoomPeer>,
     pub track_id: String,
+    recent_voice_activity: AtomicBool,
 }
 
 impl PublishedTrack {
@@ -68,6 +78,7 @@ impl PublishedTrack {
             simulcast_layers: DashMap::new(),
             sender_peer: romm_peer,
             track_id,
+            recent_voice_activity: AtomicBool::new(true),
         }
     }
 
@@ -161,6 +172,42 @@ impl PublishedTrack {
 
         if pkt.header.ssrc != q_ssrc {
             return;
+        }
+
+        let audio_lvl_ext_id = self
+            .sender_peer
+            .audio_lvl_ext_id
+            .load(atomic::Ordering::Relaxed);
+
+        if self.kind == RtpCodecKind::Audio && audio_lvl_ext_id > 0 {
+            if let Some(&value) = pkt
+                .header
+                .get_extension(audio_lvl_ext_id)
+                .as_deref()
+                .filter(|ex| ex.len() == 1)
+                .and_then(|ex| ex.first())
+            {
+                let voice_activity = (value & 0x80) != 0;
+                let audio_level = value & 0x7F;
+                // rms
+                let levl = 10f32.powf(-(audio_level as f32) / 20.0);
+                let conn_id = self.sender_peer.conn_id;
+                let active = levl > 0.03 && voice_activity;
+                if self.recent_voice_activity.swap(active, Ordering::Relaxed) != active {
+                    _ = self
+                        .sender_peer
+                        .room
+                        .broadcast_control(
+                            Uuid::nil(),
+                            &VoiceActivity {
+                                event_type: "voice_activity",
+                                from: conn_id,
+                                active: active,
+                            },
+                        )
+                        .await;
+                }
+            }
         }
 
         let d = parse_vp9(&pkt.payload);

@@ -33,6 +33,10 @@ export const useCallStore = defineStore('call', () => {
 
   const outputStream = ref<MediaStream | null>(null)
 
+  // Local connection id, assigned by the server on join. Anonymous users get
+  // one too, so it is usable as the identity key for the local participant.
+  const selfConnId = ref<string | null>(null)
+
   const participants = ref<Participant[]>([
     {
       id: 0,
@@ -41,6 +45,7 @@ export const useCallStore = defineStore('call', () => {
       muted: true,
       cameraOff: true,
       stream: null,
+      speaking: false
     },
   ])
 
@@ -133,6 +138,12 @@ export const useCallStore = defineStore('call', () => {
   }
 
   //  Participant Actions
+  function setSelfConnId(connId: string) {
+    selfConnId.value = connId
+    const me = participants.value.find((p) => p.id === 0)
+    if (me) me.conn_id = connId
+  }
+
   function upsertParticipant(p: Participant) {
     const existing = participants.value.find((item) => item.conn_id === p.conn_id)
     if (existing) {
@@ -152,6 +163,8 @@ export const useCallStore = defineStore('call', () => {
   return {
     room,
     participants,
+    selfConnId,
+    setSelfConnId,
     chatMessages,
     pushChat,
     memberChanges,

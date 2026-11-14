@@ -82,7 +82,7 @@ onUnmounted(() => {
         </span>
 
         <span
-          v-if="!p.conn_id"
+          v-if="p.id === 0"
           class="shrink-0 px-2 py-0.5 rounded-full bg-primary/10 text-[10px] font-semibold text-primary"
         >
           You

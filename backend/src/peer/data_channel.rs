@@ -5,7 +5,6 @@
 use crate::ai::assistant;
 use crate::peer::constant::{FORWARD_RID, PLI_WINDOW};
 use crate::peer::driver::PeerDriver;
-use crate::sfu::svc::parse_vp9;
 use rtc::data_channel::RTCDataChannelMessage;
 use rtc::peer_connection::message::RTCMessage;
 use rtc::rtp_transceiver::rtp_sender::{RTCRtpCodec, RtpCodecKind};
@@ -14,7 +13,6 @@ use std::sync::Arc;
 use std::time::Instant;
 use tracing::{debug, error, info};
 use uuid::Uuid;
-use validator::ValidateLength;
 
 #[derive(Deserialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -118,7 +116,10 @@ impl PeerDriver {
             }
             Ok(ControlMessage::InviteAi) => {
                 info!("invite ai on data chanel");
-                assistant::join_to_room(self.room.clone());
+                let room = self.room.clone();
+                tokio::task::spawn_local(async move {
+                    assistant::join_to_room(room).await;
+                });
             }
             Err(e) => {
                 debug!("conn {conn_id}: control parse err: {e}");

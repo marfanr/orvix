@@ -42,6 +42,10 @@ const showCanvas = computed(
 
 const MicStateIcon = computed(() => (props.participant.muted ? MicOffIcon : MicIcon))
 
+function initials(name: string): string {
+  return name.trim().charAt(0).toUpperCase() || '?'
+}
+
 const videoRef = ref<HTMLVideoElement | null>(null)
 
 const sourceStream = ref<MediaStream | null>(null)
@@ -147,15 +151,15 @@ function setVideoRef(el: Element | ComponentPublicInstance | null): void {
 
 <template>
   <div
-    class="relative overflow-hidden min-w-0 min-h-0 h-full w-full bg-stone-900 text-white flex items-center justify-center"
+    class="relative flex h-full min-h-0 w-full min-w-0 items-center justify-center overflow-hidden bg-stone-900 text-white"
     :class="tileClass"
   >
     <div
       v-if="participant.cameraOff"
-      class="size-16 sm:size-20 md:size-24 shrink-0 rounded-full bg-brown-ribbon-800 flex items-center justify-center"
+      class="flex size-16 shrink-0 items-center justify-center rounded-full bg-brown-ribbon-800 sm:size-20 md:size-24"
     >
-      <span class="text-white text-lg sm:text-xl md:text-2xl font-medium" aria-hidden="true">
-        {{ participant.name[0]?.toUpperCase() }}
+      <span class="text-lg font-medium sm:text-xl md:text-2xl" aria-hidden="true">
+        {{ initials(participant.name) }}
       </span>
     </div>
 
@@ -169,7 +173,7 @@ function setVideoRef(el: Element | ComponentPublicInstance | null): void {
       />
       <video
         :ref="setVideoRef"
-        class="w-full h-full bg-black object-cover"
+        class="h-full w-full bg-black object-cover"
         autoplay
         playsinline
         muted
@@ -179,13 +183,20 @@ function setVideoRef(el: Element | ComponentPublicInstance | null): void {
     <AudioComponent :participant="participant" />
 
     <div
-      class="absolute bottom-1 left-1 sm:bottom-2 sm:left-2 md:bottom-4 md:left-4 p-1 sm:p-1.5 md:p-2 text-[10px] sm:text-xs flex flex-row gap-x-1.5 sm:gap-x-2 md:gap-x-3 items-center bg-zinc-800/60 rounded-md text-white max-w-[calc(100%-0.5rem)] sm:max-w-[calc(100%-1rem)]"
+      v-if="participant.speaking"
+      class="pointer-events-none absolute inset-0 rounded-[inherit] ring-2 ring-success ring-inset"
+      aria-hidden="true"
+    />
+
+    <div
+      class="absolute bottom-1 left-1 flex max-w-[calc(100%-0.5rem)] items-center gap-x-1.5 rounded-md bg-black/70 p-1 text-[10px] sm:bottom-2 sm:left-2 sm:max-w-[calc(100%-1rem)] sm:gap-x-2 sm:p-1.5 sm:text-xs md:bottom-4 md:left-4 md:gap-x-3 md:p-2"
     >
       <span class="truncate">{{ participant.name }}</span>
+      <span class="sr-only">{{ participant.muted ? 'Muted' : 'Unmuted' }}</span>
       <component
         :is="MicStateIcon"
-        class="size-3 sm:size-3.5 md:size-[15px]"
-        :aria-label="participant.muted ? 'Muted' : 'Unmuted'"
+        class="size-3 shrink-0 sm:size-3.5 md:size-[15px]"
+        aria-hidden="true"
       />
     </div>
   </div>

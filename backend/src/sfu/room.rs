@@ -7,13 +7,14 @@ use crate::models::room::Room;
 use crate::sfu::room_peer::RoomPeer;
 use crate::sfu::svc::LayerSelector;
 use crate::sfu::track::{Output, PublishedTrack};
+use arc_swap::{ArcSwap, ArcSwapOption};
 use axum::extract::ws::Message;
 use dashmap::DashMap;
 use rtc::rtp_transceiver::rtp_sender::{RTCRtpCodec, RtpCodecKind};
 use sonic_rs::Serialize;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use tracing::{info, warn};
+use tracing::warn;
 use uuid::Uuid;
 
 pub enum RoomMemberstype {
@@ -30,8 +31,6 @@ pub struct RoomSfu {
     pub pending_joins: AtomicUsize,
 }
 
-/// Keeps `RoomSfu::pending_joins` incremented for as long as a join is in
-/// flight and decrements it when the join completes or fails.
 pub struct JoinToken(Arc<RoomSfu>);
 
 impl Drop for JoinToken {
@@ -50,8 +49,6 @@ pub struct TrackState {
 }
 
 impl RoomSfu {
-    /// Mark a join as in flight. Caller *must* hold the `state.rooms` shard
-    /// guard while calling this so it cannot race with room teardown.
     pub fn register_join(self: &Arc<Self>) -> JoinToken {
         self.pending_joins.fetch_add(1, Ordering::AcqRel);
         JoinToken(Arc::clone(self))

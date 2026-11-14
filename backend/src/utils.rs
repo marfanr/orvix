@@ -1,8 +1,10 @@
+use std::io::Cursor;
 use std::{env, sync::OnceLock};
 
 use argon2::{Algorithm, Argon2, Params, Version};
 use chrono::{Duration, Utc};
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
+use rtc::sdp::SessionDescription;
 use rtc::stun::attributes::ATTR_USERNAME;
 use rtc::stun::message::{Message, is_stun_message};
 use rtc::stun::textattrs::TextAttribute;
@@ -233,4 +235,23 @@ pub async fn resolve_announce_ip() -> std::net::IpAddr {
 
     tracing::warn!("could not detect announce ip, using 127.0.0.1");
     std::net::IpAddr::from([127, 0, 0, 1])
+}
+
+// audio
+pub const AUDIO_LEVEL_URI: &str = "urn:ietf:params:rtp-hdrext:ssrc-audio-level";
+
+pub fn find_audio_level_ext_id(sdp: &str) -> Option<u8> {
+    let desc = SessionDescription::unmarshal(&mut Cursor::new(sdp.as_bytes())).ok()?;
+
+    desc.media_descriptions
+        .iter()
+        .filter(|m| m.media_name.media == "audio")
+        .flat_map(|m| m.attributes.iter())
+        .filter(|a| a.key == "extmap")
+        .filter_map(|a| a.value.as_deref())
+        .find_map(|v| {
+            let mut it = v.split_whitespace();
+            let id = it.next()?.split('/').next()?.parse::<u8>().ok()?;
+            (it.next()? == AUDIO_LEVEL_URI).then_some(id)
+        })
 }

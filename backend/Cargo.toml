@@ -47,6 +47,8 @@ sdp-types = "0.3.0"
 ort = { version = "2.0.0-rc.15", features = ["webgpu"] }
 hound = "3.5.1"
 bytes = "1.12.1"
+opus = "0.4.0"
+sherpa-onnx = "2.0.1"
 
 [target.'cfg(not(target_env = "msvc"))'.dependencies]
 jemallocator = { version = "0.5.4", features = ["stats", "background_threads"] }

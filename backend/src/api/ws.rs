@@ -7,7 +7,7 @@ use crate::api::server::ServerState;
 use crate::models;
 use crate::sfu::room::RoomSfu;
 use crate::sfu::room_peer::RoomPeer;
-use crate::utils::{AccessClaims, verify_jwt};
+use crate::utils::{AccessClaims, find_audio_level_ext_id, verify_jwt};
 use axum::Router;
 use axum::extract::ws::{Message, WebSocket};
 use axum::extract::{State, WebSocketUpgrade};
@@ -17,7 +17,7 @@ use futures_util::{TryFutureExt, sink::SinkExt, stream::StreamExt};
 use http::header::{ORIGIN, USER_AGENT};
 use http::{HeaderMap, StatusCode};
 use serde::Deserialize;
-use std::sync::Arc;
+use std::sync::{Arc, atomic};
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 use uuid::Uuid;
@@ -63,7 +63,7 @@ async fn answer_join(
     .await
 }
 
-async fn sync_room_member(
+pub async fn sync_room_member(
     sink: &mpsc::Sender<Message>,
     r: &RoomSfu,
     conn_id: &Uuid,
@@ -269,6 +269,12 @@ impl WsMsg {
             .get(&conn_id)
             .ok_or_else(|| "peer not found in room".to_string())?;
         let peer = Arc::clone(&peers.peer);
+
+        if let Some(level_ext_id) = find_audio_level_ext_id(sdp) {
+            peers
+                .audio_lvl_ext_id
+                .store(level_ext_id, atomic::Ordering::Relaxed);
+        }
 
         let answer = peer
             .answer_offer(sdp.to_string(), crate::peer::PeerType::SUBSCRIBER)
@@ -502,6 +508,8 @@ async fn handle_socket(socket: WebSocket, _user_agent: String, state: ServerStat
         // shard and `can_be_removed` also accounts for joins that are in flight,
         // so a joiner that grabbed this room cannot end up in an orphaned room.
         // Note: the key is `room.id`, not the `conn_to_rooms` key.
+
+        // TODO: kill assistant from room
         state
             .rooms
             .remove_if(&room.id, |_, r| Arc::ptr_eq(r, &room) && r.can_be_removed());
