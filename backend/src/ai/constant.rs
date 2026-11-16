@@ -6,4 +6,3 @@ pub(crate) const SPEECH_RMS: f32 = 0.006;
 pub(crate) const PAUSE_MS: u32 = 500;
 pub(crate) const MAX_SAMPLES: usize = SAMPLE_RATE as usize * 10;
 pub(crate) const MIN_SAMPLES: usize = SAMPLE_RATE as usize / 2;
-// pub(crate) const PREROLL_SAMPLES: usize = SAMPLE_RATE as usize / 2;
