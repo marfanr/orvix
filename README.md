@@ -50,7 +50,9 @@
 - **In-call tools:** chat, emoji reactions, screen sharing, member list, and per-device media configuration.
 - **Authentication:** JWT access tokens with rotating refresh tokens and reuse detection.
 - **Recording:** server-side recording to disk (requires `ffmpeg`).
-- **AI experiments:** local ONNX text-to-speech, speech-to-text, and background filters.
+- **Speech-to-text:** local transcription powered by [faster-whisper](https://github.com/SYSTRAN/faster-whisper).
+- **Text-to-speech:** local voices powered by [Kokoro](https://github.com/hexgrad/kokoro).
+- **Background blur:** runs in the browser via [MediaPipe](https://ai.google.dev/edge/mediapipe/solutions/vision/image_segmenter).
 - **Observability:** OpenTelemetry, Prometheus, Loki, Tempo, and provisioned Grafana dashboards.
 
 ## Architecture
@@ -69,6 +71,7 @@ For SFU internals, API reference, data models, and the full environment variable
 - Docker and Docker Compose
 - OpenSSL
 - FFmpeg (optional, for recording)
+- Python 3.9+ (optional, for the local speech-to-text worker)
 
 ### Installation
 
@@ -107,6 +110,17 @@ For SFU internals, API reference, data models, and the full environment variable
 5. Create a `vidcall` database and apply [`backend/migrations/01-init.sql`](backend/migrations/01-init.sql).
 
    > Migration files are still being consolidated. Verify the tables referenced in [`backend/src/models/constant.rs`](backend/src/models/constant.rs) before starting the backend.
+
+6. Set up the Python environment for the local speech-to-text worker:
+
+   ```sh
+   cd backend
+   python3 -m venv .venv
+   source .venv/bin/activate
+   pip install -r requirements.txt
+   ```
+
+   The Whisper model is downloaded automatically on first run. Set `WHISPER_DOWNLOAD_ROOT` to control where models are cached.
 
 ### Run
 

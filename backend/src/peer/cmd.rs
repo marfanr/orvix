@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Mohammad Arfan
+//
+// SPDX-License-Identifier: AGPL-3.0
+
 use crate::peer::{
     cmd::PeerCommand::SetOutboundCodec,
     constant::{CONTROL_LABEL, MEDIA_QUEUE_SIZE, MESSAGE_LABEL},
@@ -25,7 +29,10 @@ use rtc::{
             CandidateHostConfig, CandidateServerReflexiveConfig, RTCDtlsRole, RTCIceCandidateInit,
         },
     },
-    rtp_transceiver::RTCRtpSenderId,
+    rtp_transceiver::{
+        RTCRtpSenderId,
+        rtp_sender::{RTCRtpHeaderExtensionCapability, RtpCodecKind},
+    },
 };
 use std::{
     collections::HashMap,
@@ -349,6 +356,14 @@ async fn create_pc(local_addr: SocketAddr) -> Result<RTCPeerConnection, String> 
     media_engine
         .register_default_codecs()
         .map_err(|e| format!("register codecs: {e}"))?;
+
+    _ = media_engine.register_header_extension(
+        RTCRtpHeaderExtensionCapability {
+            uri: "urn:ietf:params:rtp-hdrext:ssrc-audio-level".to_owned(),
+        },
+        RtpCodecKind::Audio,
+        None,
+    );
 
     let registry = register_default_interceptors(Registry::new(), &mut media_engine)
         .map_err(|e| format!("register interceptors: {e}"))?;

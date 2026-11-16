@@ -6,36 +6,42 @@ use crate::peer::PeerCommandInstance;
 use crate::sfu::room::RoomSfu;
 use axum::extract::ws::Message;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
 pub struct RoomPeer {
     pub user_id: Option<Uuid>,
+    pub conn_id: Uuid,
     pub username: Arc<str>,
     pub ws_tx: Option<mpsc::Sender<Message>>,
     pub peer: Arc<PeerCommandInstance>,
     /// A peer is present in `RoomSfu::peers` as soon as it asks to join, but it
     /// must not receive tracks or room state until the owner admits it.
     admitted: AtomicBool,
+    pub audio_lvl_ext_id: AtomicU8,
+    pub room: Arc<RoomSfu>,
 }
 
 impl RoomPeer {
     pub async fn new(
         user_id: Option<Uuid>,
-        _conn_id: Uuid,
+        conn_id: Uuid,
         username: Arc<str>,
         peer: Arc<PeerCommandInstance>,
         ws_tx: Option<mpsc::Sender<Message>>,
-        _room: Arc<RoomSfu>,
+        room: Arc<RoomSfu>,
         admitted: bool,
     ) -> Result<Arc<Self>, crate::peer::error::PeerError> {
         Ok(Arc::new(RoomPeer {
             user_id,
+            conn_id,
             username,
             ws_tx,
             peer,
             admitted: AtomicBool::new(admitted),
+            audio_lvl_ext_id: AtomicU8::new(0),
+            room,
         }))
     }
 

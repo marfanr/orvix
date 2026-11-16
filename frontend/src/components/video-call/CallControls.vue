@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, type Component } from 'vue'
 import {
+  BotIcon,
   CameraIcon,
   CameraOffIcon,
   CircleDotIcon,
@@ -18,7 +19,6 @@ import type { DataControlType } from '@/composables/useWebRTC.ts'
 import { useMembersPanel } from '@/composables/useMembersPanel.ts'
 import { useCallStore } from '@/stores/call.ts'
 import { storeToRefs } from 'pinia'
-import { BotIcon } from '@lucide/vue'
 
 defineProps<{
   cameraOff: boolean
@@ -39,7 +39,9 @@ const { isChatOpen } = storeToRefs(store)
 const { toggleChat } = store
 
 const actionClass =
-  'grid size-11 shrink-0 place-items-center rounded-full transition cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary touch-manipulation active:scale-95'
+  'grid size-11 shrink-0 place-items-center rounded-full transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary touch-manipulation active:scale-95'
+const activeActionClass = 'bg-primary/10 text-primary hover:bg-primary/15'
+const idleActionClass = 'bg-gray-100 text-gray-700 hover:bg-gray-200'
 
 const moreOpen = ref(false)
 const moreButtonRef = ref<HTMLButtonElement | null>(null)
@@ -108,6 +110,10 @@ function onParticipantsClick() {
   membersPanel.toggle()
 }
 
+function onAiInviteClick() {
+  emit('send-control', JSON.stringify({ type: 'invite_ai' }))
+}
+
 interface MenuItem {
   key: string
   label: string
@@ -122,17 +128,17 @@ const menuItems = computed<MenuItem[]>(() => [
   {
     key: 'screen-share',
     label: 'Share screen',
-    description: 'Coming soon',
+    description: 'Share your screen with everyone',
     icon: ScreenShareIcon,
     disabled: true,
   },
   {
     key: 'record',
     label: 'Record meeting',
-    description: 'Start a server recording',
+    description: 'Record this meeting on the server',
     icon: CircleDotIcon,
     onSelect: onRecordClick,
-    disabled: true
+    disabled: true,
   },
   {
     key: 'participants',
@@ -144,10 +150,11 @@ const menuItems = computed<MenuItem[]>(() => [
   },
   {
     key: 'ai',
-    label: 'invite AI',
-    description: 'invite AI into this room',
+    label: 'Invite AI',
+    description: 'Invite the assistant to this room',
     icon: BotIcon,
-  }
+    onSelect: onAiInviteClick,
+  },
 ])
 
 function runMenuItem(item: MenuItem) {
@@ -206,12 +213,7 @@ onUnmounted(() => {
         :aria-label="muted ? 'Unmute microphone' : 'Mute microphone'"
         :title="muted ? 'Unmute microphone' : 'Mute microphone'"
         :aria-pressed="muted"
-        :class="[
-          actionClass,
-          muted
-            ? 'bg-primary/10 text-primary hover:bg-primary/15'
-            : 'bg-gray-100 text-gray-800 hover:bg-gray-200',
-        ]"
+        :class="[actionClass, muted ? activeActionClass : idleActionClass]"
         @click="emit('toggle-mic')"
       >
         <MicOffIcon v-if="muted" class="size-5" aria-hidden="true" />
@@ -223,12 +225,7 @@ onUnmounted(() => {
         :aria-label="cameraOff ? 'Turn camera on' : 'Turn camera off'"
         :title="cameraOff ? 'Turn camera on' : 'Turn camera off'"
         :aria-pressed="cameraOff"
-        :class="[
-          actionClass,
-          cameraOff
-            ? 'bg-primary/10 text-primary hover:bg-primary/15'
-            : 'bg-gray-100 text-gray-800 hover:bg-gray-200',
-        ]"
+        :class="[actionClass, cameraOff ? activeActionClass : idleActionClass]"
         @click="emit('toggle-camera')"
       >
         <CameraOffIcon v-if="cameraOff" class="size-5" aria-hidden="true" />
@@ -240,7 +237,7 @@ onUnmounted(() => {
           type="button"
           aria-label="Participants"
           title="Participants"
-          :class="[actionClass, 'bg-gray-100 text-gray-700 hover:bg-gray-200']"
+          :class="[actionClass, idleActionClass]"
           @click="onParticipantsClick"
         >
           <UsersIcon class="size-5" aria-hidden="true" />
@@ -252,12 +249,7 @@ onUnmounted(() => {
         :aria-label="isChatOpen ? 'Close chat' : 'Open chat'"
         :title="isChatOpen ? 'Close chat' : 'Open chat'"
         :aria-pressed="isChatOpen"
-        :class="[
-          actionClass,
-          isChatOpen
-            ? 'bg-primary/10 text-primary hover:bg-primary/15'
-            : 'bg-gray-100 text-gray-700 hover:bg-gray-200',
-        ]"
+        :class="[actionClass, isChatOpen ? activeActionClass : idleActionClass]"
         @click="toggleChat"
       >
         <MessageSquarePlusIcon class="size-5" aria-hidden="true" />
@@ -271,7 +263,7 @@ onUnmounted(() => {
         type="button"
         aria-label="Leave call"
         title="Leave call"
-        class="grid size-11 shrink-0 place-items-center rounded-full bg-primary text-white transition hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary touch-manipulation active:scale-95"
+        :class="[actionClass, 'bg-primary text-white hover:bg-primary-hover']"
         @click="emit('hangup')"
       >
         <PhoneOffIcon class="size-5" aria-hidden="true" />
@@ -282,12 +274,10 @@ onUnmounted(() => {
         type="button"
         aria-label="More controls"
         title="More controls"
-        aria-haspopup="true"
+        aria-haspopup="dialog"
         :aria-expanded="moreOpen"
-        :class="[
-          actionClass,
-          moreOpen ? 'bg-primary/10 text-primary' : 'bg-gray-100 text-gray-700 hover:bg-gray-200',
-        ]"
+        aria-controls="more-controls-panel"
+        :class="[actionClass, moreOpen ? activeActionClass : idleActionClass]"
         @click="toggleMore"
       >
         <MoreHorizontalIcon class="size-5" aria-hidden="true" />
@@ -307,8 +297,10 @@ onUnmounted(() => {
         ></div>
 
         <div
+          id="more-controls-panel"
           ref="panelRef"
-          class="relative mt-auto flex max-h-[75dvh] w-full flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl sm:mt-0 sm:max-h-none sm:w-60 sm:rounded-xl sm:border sm:border-gray-200 sm:shadow-xl"
+          class="relative mt-auto flex max-h-[75dvh] w-full flex-col overflow-hidden rounded-t-2xl bg-white shadow-xl sm:mt-0 sm:max-h-none sm:w-60 sm:rounded-xl sm:border sm:border-gray-200"
+          role="dialog"
           aria-label="More controls"
         >
           <div
@@ -342,7 +334,12 @@ onUnmounted(() => {
                   @click="runMenuItem(item)"
                 >
                   <component :is="item.icon" class="size-5 shrink-0" aria-hidden="true" />
-                  <span class="min-w-0 flex-1 truncate">{{ item.label }}</span>
+                  <span class="min-w-0 flex-1">
+                    <span class="block truncate">{{ item.label }}</span>
+                    <span class="block truncate text-xs font-normal opacity-70">
+                      {{ item.description }}
+                    </span>
+                  </span>
                   <span
                     v-if="item.disabled"
                     class="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-500"

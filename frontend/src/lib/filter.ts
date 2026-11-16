@@ -11,13 +11,13 @@ const SUPPORTS_CTX_FILTER =
 type Ctx2D = OffscreenCanvasRenderingContext2D
 
 const KSIZE = 7
-const HALF = (KSIZE - 1) >> 1
+const HALF_KSIZE = (KSIZE - 1) >> 1
 const SIGMA = 0.3 * ((KSIZE - 1) * 0.5 - 1) + 0.8
 const KERNEL = (() => {
   const k = new Float32Array(KSIZE)
   let sum = 0
   for (let i = 0; i < KSIZE; i++) {
-    const x = i - HALF
+    const x = i - HALF_KSIZE
     k[i] = Math.exp(-(x * x) / (2 * SIGMA * SIGMA))
     sum += k[i]!
   }
@@ -125,8 +125,8 @@ function gaussian(src: Uint8Array, dst: Uint8Array, w: number, h: number): void 
     const row = y * w
     for (let x = 0; x < w; x++) {
       let s = 0
-      for (let k = -HALF; k <= HALF; k++) {
-        s += src[row + reflect(x + k, w)]! * KERNEL[k + HALF]!
+      for (let k = -HALF_KSIZE; k <= HALF_KSIZE; k++) {
+        s += src[row + reflect(x + k, w)]! * KERNEL[k + HALF_KSIZE]!
       }
       f[row + x] = s
     }
@@ -135,8 +135,8 @@ function gaussian(src: Uint8Array, dst: Uint8Array, w: number, h: number): void 
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       let s = 0
-      for (let k = -HALF; k <= HALF; k++) {
-        s += f[reflect(y + k, h) * w + x]! * KERNEL[k + HALF]!
+      for (let k = -HALF_KSIZE; k <= HALF_KSIZE; k++) {
+        s += f[reflect(y + k, h) * w + x]! * KERNEL[k + HALF_KSIZE]!
       }
       dst[y * w + x] = s + 0.5
     }

@@ -30,7 +30,7 @@ pub fn worker_pool() -> &'static [mpsc::UnboundedSender<WorkerMessage>] {
         let n = std::thread::available_parallelism().map_or(1, |n| n.get());
         (0..n)
             .map(|i| {
-                let base_port = 4718;
+                let base_port = 7718;
                 let (tx, mut rx) = mpsc::unbounded_channel::<WorkerMessage>();
                 // spawn worker thread
                 let builder = Builder::new().name(format!("peer-worker-{i}"));

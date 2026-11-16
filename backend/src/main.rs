@@ -51,6 +51,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     logger::init_logger();
 
+    ai::stt::warm_up();
+
     init_keys();
     let pool = conn::init_db()?;
     prewarm(&pool, 4).await;

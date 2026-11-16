@@ -40,16 +40,6 @@ const advancedToggles: MeetingConfigToggleItem[] = [
       </div>
     </div>
 
-    <fieldset class="min-w-0">
-      <legend class="text-sm font-semibold text-gray-900">Diagnostics</legend>
-
-      <div class="mt-3 flex flex-col gap-3 rounded-xl border border-gray-200 p-4">
-        <CheckboxElement v-model="form.logSdp" label="Log SDP offers and answers to the console" />
-        <CheckboxElement v-model="form.logIce" label="Log ICE candidates" />
-        <CheckboxElement v-model="form.bitrateGraph" label="Show bitrate graph" />
-      </div>
-    </fieldset>
-
     <div
       class="flex flex-col gap-3 rounded-xl border border-gray-200 bg-gray-50 p-4 sm:flex-row sm:items-center sm:justify-between"
     >

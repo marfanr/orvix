@@ -83,7 +83,6 @@ export function useWebRTC(
     chatChannelSub.value ??= sub_pc.createDataChannel('chat', { id: 1, negotiated: true })
 
     controlChannelSub.value.onmessage = (msg) => {
-      debug('received control message')
       handleControl?.(msg)
     }
 

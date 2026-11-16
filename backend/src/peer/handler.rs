@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Mohammad Arfan
+//
+// SPDX-License-Identifier: AGPL-3.0
+
 use crate::peer::driver::PeerDriver;
 use axum::extract::ws;
 use rtc::peer_connection::event::{RTCPeerConnectionEvent, RTCTrackEvent};

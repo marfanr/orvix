@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import CallControls from '@/components/video-call/CallControls.vue'
 import CallHeader from '@/components/video-call/CallHeader.vue'
@@ -16,6 +16,9 @@ import { provideConfigPanel } from '@/composables/useConfigPanel.tsx'
 import ConfigPopup from '@/components/video-call/ConfigPopup.vue'
 import ChatWindow from '@/components/video-call/ChatWindow.vue'
 import { useCallStore } from '@/stores/call.ts'
+import { useAuthStore } from '@/stores/auth'
+import { recordRecentMeeting } from '@/lib/recentMeetings'
+import { userIdFromToken } from '@/lib/token'
 import { storeToRefs } from 'pinia'
 
 const route = useRoute()
@@ -38,13 +41,28 @@ const {
   newMessageData,
   resolveNewMessage,
   sendControl,
-  sendChat
+  sendChat,
 } = useVideoCallRoom(() => route.params.id)
 
 const membersPanel = provideMembersPanel(participants)
 const configPanel = provideConfigPanel()
 
 const roomParamId = computed(() => String(route.params.id))
+
+const auth = useAuthStore()
+
+watch(
+  () => room.value.status,
+  (status) => {
+    if (status !== 'joined') return
+    const ownerId = userIdFromToken(auth.accessToken)
+    if (!ownerId) return
+    recordRecentMeeting(ownerId, {
+      alias: roomParamId.value,
+      title: room.value.title,
+    })
+  },
+)
 
 const roomStatus = computed<'denied' | 'waiting' | 'not-started' | 'not-found'>(() => {
   if (room.value.status === 'denied') return 'denied'

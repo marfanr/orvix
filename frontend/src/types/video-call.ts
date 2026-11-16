@@ -9,6 +9,7 @@ export interface Participant {
   muted: boolean
   cameraOff: boolean
   stream: MediaStream | null
+  speaking: boolean
 }
 
 export type NewMeetingMode = 'now' | 'scheduled'

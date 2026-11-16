@@ -84,7 +84,6 @@ export function useVideoCallRoom(getRoomParam: () => string | string[] | undefin
 
   const handleControlChannel = (c: MessageEvent): void => {
     const data = JSON.parse(c.data)
-    console.log(data)
     switch (data.type) {
       case 'track_state': {
         const target = callStore.participants.find((p) => p.conn_id === data.from)
@@ -97,6 +96,13 @@ export function useVideoCallRoom(getRoomParam: () => string | string[] | undefin
         if (target && data.kind === 'video') target.cameraOff = true
         break
       }
+      case 'voice_activity': {
+        const from = data.from
+        const active = data.active
+        const target = participants.value.find((p) => p.conn_id == from)
+        if (target) target.speaking = active
+        break
+      }
     }
   }
 
@@ -105,7 +111,13 @@ export function useVideoCallRoom(getRoomParam: () => string | string[] | undefin
     callStore.addNewMessage(msg, from)
   }
 
-  const webrtc = useWebRTC(signaling.send, onRemoteTrack, handleControlChannel, handleIncomingChat, signaling.sendOffer)
+  const webrtc = useWebRTC(
+    signaling.send,
+    onRemoteTrack,
+    handleControlChannel,
+    handleIncomingChat,
+    signaling.sendOffer,
+  )
   const media = useLocalMedia(participants)
 
   const sendChat = (msg: string, target: string) => {
@@ -181,8 +193,10 @@ export function useVideoCallRoom(getRoomParam: () => string | string[] | undefin
           break
 
         case 'join':
-          if (data.accept) callStore.room.status = 'joined'
-          else if (callStore.room.status !== 'joined') callStore.room.status = 'denied'
+          if (data.accept) {
+            if (typeof data.conn_id === 'string') callStore.setSelfConnId(data.conn_id)
+            callStore.room.status = 'joined'
+          } else if (callStore.room.status !== 'joined') callStore.room.status = 'denied'
           break
 
         // synchronize current members
@@ -207,6 +221,7 @@ export function useVideoCallRoom(getRoomParam: () => string | string[] | undefin
               muted: true,
               cameraOff: true,
               stream: null,
+              speaking: false,
             })
           }
           break
@@ -253,6 +268,7 @@ export function useVideoCallRoom(getRoomParam: () => string | string[] | undefin
             muted: true,
             cameraOff: true,
             stream: null,
+            speaking: false,
           })
           break
         }
