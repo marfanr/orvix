@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: AGPL-3.0
 
+use crate::ai::stt::AsrHandle;
 use crate::sfu::room_peer::RoomPeer;
 use crate::sfu::svc::{LayerSelector, Verdict, parse_vp9};
 use crate::utils::describe_nal;
@@ -15,7 +16,8 @@ use rtc::rtp_transceiver::rtp_sender::{
 };
 use sonic_rs::Serialize;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, atomic};
+use std::sync::{Arc, OnceLock, atomic};
+use std::vec;
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
 use uuid::Uuid;
@@ -55,6 +57,7 @@ pub struct PublishedTrack {
     pub sender_peer: Arc<RoomPeer>,
     pub track_id: String,
     recent_voice_activity: AtomicBool,
+    asr: OnceLock<Option<AsrHandle>>,
 }
 
 impl PublishedTrack {
@@ -79,6 +82,7 @@ impl PublishedTrack {
             sender_peer: romm_peer,
             track_id,
             recent_voice_activity: AtomicBool::new(true),
+            asr: OnceLock::new(),
         }
     }
 
@@ -126,9 +130,7 @@ impl PublishedTrack {
         }
     }
 
-    /// Fresh outbound `MediaStreamTrack` for `PeerCommandInstance::attach`. The
-    /// peer driver owns payload/SSRC rewriting in `PeerDriver::write_to_sender`,
-    /// so this only needs to carry kind + codec + one encoding with an SSRC.
+    /// Fresh outbound `MediaStreamTrack` for `PeerCommandInstance::attach`
     pub fn media_track(&self) -> MediaStreamTrack {
         let ssrc = Uuid::new_v4().as_u128() as u32;
         let codec: RTCRtpCodec = self.codec.load_full().as_ref().clone();
@@ -179,35 +181,47 @@ impl PublishedTrack {
             .audio_lvl_ext_id
             .load(atomic::Ordering::Relaxed);
 
-        if self.kind == RtpCodecKind::Audio && audio_lvl_ext_id > 0 {
-            if let Some(&value) = pkt
-                .header
-                .get_extension(audio_lvl_ext_id)
-                .as_deref()
-                .filter(|ex| ex.len() == 1)
-                .and_then(|ex| ex.first())
-            {
-                let voice_activity = (value & 0x80) != 0;
-                let audio_level = value & 0x7F;
-                // rms
-                let levl = 10f32.powf(-(audio_level as f32) / 20.0);
-                let conn_id = self.sender_peer.conn_id;
-                let active = levl > 0.03 && voice_activity;
-                if self.recent_voice_activity.swap(active, Ordering::Relaxed) != active {
-                    _ = self
-                        .sender_peer
-                        .room
-                        .broadcast_control(
-                            Uuid::nil(),
-                            &VoiceActivity {
-                                event_type: "voice_activity",
-                                from: conn_id,
-                                active: active,
-                            },
-                        )
-                        .await;
+        if self.kind == RtpCodecKind::Audio {
+            if audio_lvl_ext_id > 0 {
+                if let Some(&value) = pkt
+                    .header
+                    .get_extension(audio_lvl_ext_id)
+                    .as_deref()
+                    .filter(|ex| ex.len() == 1)
+                    .and_then(|ex| ex.first())
+                {
+                    let voice_activity = (value & 0x80) != 0;
+                    let audio_level = value & 0x7F;
+                    let rms = 10f32.powf(-(audio_level as f32) / 20.0);
+                    let conn_id = self.sender_peer.conn_id;
+                    let active = rms > 0.03 && voice_activity;
+                    if self.recent_voice_activity.swap(active, Ordering::Relaxed) != active {
+                        _ = self
+                            .sender_peer
+                            .room
+                            .broadcast_control(
+                                Uuid::nil(),
+                                &VoiceActivity {
+                                    event_type: "voice_activity",
+                                    from: conn_id,
+                                    active: active,
+                                },
+                            )
+                            .await;
+                    }
                 }
             }
+        }
+
+        // TODO: is transcribt enable for specific user/peer
+        let asr = self.asr.get_or_init(|| {
+            Some(AsrHandle::spawn(move |text| {
+                tracing::info!(%text, "transcript");
+            }))
+        });
+
+        if let Some(asr) = asr {
+            asr.push(pkt.payload.clone());
         }
 
         let d = parse_vp9(&pkt.payload);

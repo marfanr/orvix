@@ -1,4 +1,5 @@
 use std::io::Cursor;
+use std::path::{Path, PathBuf};
 use std::{env, sync::OnceLock};
 
 use argon2::{Algorithm, Argon2, Params, Version};
@@ -254,4 +255,19 @@ pub fn find_audio_level_ext_id(sdp: &str) -> Option<u8> {
             let id = it.next()?.split('/').next()?.parse::<u8>().ok()?;
             (it.next()? == AUDIO_LEVEL_URI).then_some(id)
         })
+}
+
+pub fn python_path() -> PathBuf {
+    if let Ok(path) = env::var("ASR_PYTHON") {
+        if !path.is_empty() {
+            return PathBuf::from(path);
+        }
+    }
+
+    let venv = Path::new(env!("CARGO_MANIFEST_DIR")).join(".venv/bin/python");
+    if venv.is_file() {
+        return venv;
+    }
+
+    PathBuf::from("python3")
 }

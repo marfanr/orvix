@@ -1,21 +1,15 @@
-use ort::{
-    ep,
-    session::{Session, builder::GraphOptimizationLevel},
-    value::Tensor,
-};
+use ort::{session::Session, value::Tensor};
 use std::{
     collections::HashMap,
-    error::Error as StdError,
     fs,
     io::Write,
-    path::{Path, PathBuf},
+    path::Path,
     process::Command,
     sync::{Mutex, OnceLock},
     time::Instant,
 };
 
-type Error = Box<dyn StdError + Send + Sync>;
-type Results<T> = std::result::Result<T, Error>;
+use crate::ai::onnx::{Results, model_path, session as build_session};
 
 const STYLE_DIM: usize = 256;
 const MAX_TOKENS: usize = 510;
@@ -69,19 +63,6 @@ impl KokoroTokenizer {
     }
 }
 
-fn model_path() -> Results<PathBuf> {
-    if let Ok(path) = std::env::var("MODEL_DIR") {
-        return Ok(PathBuf::from(path));
-    }
-
-    let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .ok_or("cargo manifest has no parent")?
-        .to_path_buf();
-
-    Ok(workspace.join("models"))
-}
-
 fn tokenizer(dir: &Path) -> Results<&'static KokoroTokenizer> {
     if let Some(t) = TOKENIZER.get() {
         return Ok(t);
@@ -91,46 +72,26 @@ fn tokenizer(dir: &Path) -> Results<&'static KokoroTokenizer> {
     Ok(TOKENIZER.get_or_init(|| t))
 }
 
-fn opt_level() -> GraphOptimizationLevel {
-    match std::env::var("ORT_OPT").as_deref() {
-        Ok("level1") => GraphOptimizationLevel::Level1,
-        Ok("level2") => GraphOptimizationLevel::Level2,
-        Ok("level3") => GraphOptimizationLevel::Level3,
-        _ => GraphOptimizationLevel::Level2,
-    }
-}
-
-fn session(dir: &Path) -> Results<&'static Mutex<Session>> {
+fn session(dir: &Path, model: &str) -> Results<&'static Mutex<Session>> {
     if let Some(s) = SESSION.get() {
         return Ok(s);
     }
 
-    let env = ort::init()
-        .with_execution_providers([ep::CPU::default().build()])
-        .build()?;
-
-    let model_file = std::env::var("MODEL_FILE").unwrap_or_else(|_| "model.onnx".into());
-
-    let session = Session::builder(&env)?
-        .with_optimization_level(opt_level())
-        .map_err(|e| format!("{e}"))?
-        .commit_from_file(dir.join("onnx").join(model_file))?;
-
-    std::mem::forget(env);
+    let session = build_session(dir.join(model))?;
 
     Ok(SESSION.get_or_init(|| Mutex::new(session)))
 }
 
 fn load_style(path: impl AsRef<Path>, n_tokens: usize) -> Results<Vec<f32>> {
     let path = path.as_ref();
-    let bytes = fs::read(path).map_err(|e| format!("gagal baca {}: {e}", path.display()))?;
+    let bytes = fs::read(path).map_err(|e| format!("failed load style {}: {e}", path.display()))?;
 
     let start = n_tokens * STYLE_DIM * 4;
     let end = start + STYLE_DIM * 4;
 
     let slice = bytes
         .get(start..end)
-        .ok_or_else(|| format!("voice file terlalu kecil untuk {n_tokens} token"))?;
+        .ok_or_else(|| format!("voice file too small: {n_tokens} token"))?;
 
     Ok(slice
         .chunks_exact(4)
@@ -199,7 +160,9 @@ fn infer(dir: &Path, tokens: &[i64], voice: &str) -> Results<Vec<f32>> {
     input_ids.extend_from_slice(tokens);
     input_ids.push(0);
 
-    let mut session = session(dir)?.lock().map_err(|_| "session mutex poisoned")?;
+    let mut session = session(dir, "kokoro/model.onnx")?
+        .lock()
+        .map_err(|_| "session mutex poisoned")?;
 
     let outputs = session.run(ort::inputs![
         "input_ids" => Tensor::from_array((
@@ -305,23 +268,23 @@ fn encode_opus(pcm: &[f32]) -> Results<Vec<Vec<u8>>> {
     Ok(packets)
 }
 
-fn dump_debug(raw: &[f32], pcm48: &[f32], packets: &[Vec<u8>]) -> Results<()> {
-    write_wav("/tmp/tts_raw_24k.wav", MODEL_RATE, raw)?;
-    write_wav("/tmp/tts_up_48k.wav", OPUS_RATE, pcm48)?;
+// fn dump_debug(raw: &[f32], pcm48: &[f32], packets: &[Vec<u8>]) -> Results<()> {
+//     write_wav("/tmp/tts_raw_24k.wav", MODEL_RATE, raw)?;
+//     write_wav("/tmp/tts_up_48k.wav", OPUS_RATE, pcm48)?;
 
-    let mut decoder = opus::Decoder::new(OPUS_RATE, opus::Channels::Mono)?;
-    let mut decoded = Vec::with_capacity(packets.len() * OPUS_FRAME);
-    let mut out = [0.0f32; OPUS_FRAME];
+//     let mut decoder = opus::Decoder::new(OPUS_RATE, opus::Channels::Mono)?;
+//     let mut decoded = Vec::with_capacity(packets.len() * OPUS_FRAME);
+//     let mut out = [0.0f32; OPUS_FRAME];
 
-    for p in packets {
-        let n = decoder.decode_float(p, &mut out, false)?;
-        decoded.extend_from_slice(&out[..n]);
-    }
+//     for p in packets {
+//         let n = decoder.decode_float(p, &mut out, false)?;
+//         decoded.extend_from_slice(&out[..n]);
+//     }
 
-    write_wav("/tmp/tts_opus_roundtrip_48k.wav", OPUS_RATE, &decoded)?;
+//     write_wav("/tmp/tts_opus_roundtrip_48k.wav", OPUS_RATE, &decoded)?;
 
-    Ok(())
-}
+//     Ok(())
+// }
 
 pub fn synthesize(text: &str, voice: &str) -> Results<Vec<Vec<u8>>> {
     let dir = model_path()?;
@@ -358,11 +321,6 @@ pub fn synthesize(text: &str, voice: &str) -> Results<Vec<Vec<u8>>> {
 
     let pcm48 = upsample_2x(&pcm);
     let packets = encode_opus(&pcm48)?;
-
-    if std::env::var("TTS_DUMP").is_ok() {
-        dump_debug(&pcm, &pcm48, &packets)?;
-        println!("dumped wav ke /tmp/tts_*.wav");
-    }
 
     Ok(packets)
 }
