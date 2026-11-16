@@ -268,26 +268,8 @@ fn encode_opus(pcm: &[f32]) -> Results<Vec<Vec<u8>>> {
     Ok(packets)
 }
 
-// fn dump_debug(raw: &[f32], pcm48: &[f32], packets: &[Vec<u8>]) -> Results<()> {
-//     write_wav("/tmp/tts_raw_24k.wav", MODEL_RATE, raw)?;
-//     write_wav("/tmp/tts_up_48k.wav", OPUS_RATE, pcm48)?;
-
-//     let mut decoder = opus::Decoder::new(OPUS_RATE, opus::Channels::Mono)?;
-//     let mut decoded = Vec::with_capacity(packets.len() * OPUS_FRAME);
-//     let mut out = [0.0f32; OPUS_FRAME];
-
-//     for p in packets {
-//         let n = decoder.decode_float(p, &mut out, false)?;
-//         decoded.extend_from_slice(&out[..n]);
-//     }
-
-//     write_wav("/tmp/tts_opus_roundtrip_48k.wav", OPUS_RATE, &decoded)?;
-
-//     Ok(())
-// }
-
 pub fn synthesize(text: &str, voice: &str) -> Results<Vec<Vec<u8>>> {
-    let dir = model_path()?;
+    let dir = model_path()?.join("kokoro");
     let tokenizer = tokenizer(&dir)?;
 
     let mut pcm: Vec<f32> = Vec::new();

@@ -1,0 +1,30 @@
+Kokoro-82M
+Copyright (c) hexgrad
+
+This directory contains a redistributed copy of the Kokoro-82M text-to-speech
+model and its voice style embeddings.
+
+Upstream sources
+----------------
+- Model weights and voicepacks: https://huggingface.co/hexgrad/Kokoro-82M (v1.0)
+- G2P / tokenizer: https://github.com/hexgrad/misaki
+- License: Apache License 2.0 (see LICENSE.md in this directory)
+
+ONNX conversion
+---------------
+The ONNX graph and the packed voice format follow the conversion tooling from
+https://github.com/thewh1teagle/kokoro-onnx (MIT). That project's own code is
+MIT-licensed; the Kokoro model weights and voice data remain Apache-2.0 and are
+redistributed here under Apache-2.0.
+
+Changes from upstream
+---------------------
+- PyTorch checkpoint converted to ONNX (model.onnx).
+- Voice style embeddings extracted from the voicepacks and stored as raw
+  float32 arrays (voices/*.bin).
+- Tokenizer files repackaged for local ONNX inference.
+
+No endorsement
+--------------
+Kokoro and Kokoro-82M are projects of hexgrad. This copy is not affiliated
+with, sponsored by, or endorsed by hexgrad.

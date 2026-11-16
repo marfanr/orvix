@@ -4,3 +4,6 @@
 certs/
 otel/bearer_token.env
 md
+.venv
+__pycache__/
+*.old

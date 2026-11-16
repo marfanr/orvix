@@ -51,7 +51,7 @@
 - **Authentication:** JWT access tokens with rotating refresh tokens and reuse detection.
 - **Recording:** server-side recording to disk (requires `ffmpeg`).
 - **Speech-to-text:** local transcription powered by [faster-whisper](https://github.com/SYSTRAN/faster-whisper).
-- **Text-to-speech:** local voices powered by [Kokoro](https://github.com/hexgrad/kokoro).
+- **Text-to-speech:** local voices powered by [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) (Apache-2.0), with G2P via [misaki](https://github.com/hexgrad/misaki).
 - **Background blur:** runs in the browser via [MediaPipe](https://ai.google.dev/edge/mediapipe/solutions/vision/image_segmenter).
 - **Observability:** OpenTelemetry, Prometheus, Loki, Tempo, and provisioned Grafana dashboards.
 
@@ -161,10 +161,14 @@ cd backend && cargo fmt --check && cargo clippy --all-targets -- -D warnings && 
 
 ## License
 
-Distributed under the **GNU Affero General Public License v3.0 (AGPL-3.0)**. See [`LICENSE`](LICENSE) for details.
+The source code is distributed under the **GNU Affero General Public License v3.0 (AGPL-3.0)**. See [`LICENSE`](LICENSE) for details.
+
+Third-party assets keep their own licenses and are not covered by the AGPL-3.0:
+
+- [`models/kokoro/`](models/kokoro/) contains the **Kokoro-82M** model weights, tokenizer, and voice embeddings, licensed under **Apache-2.0**. See [`models/kokoro/LICENSE.md`](models/kokoro/LICENSE.md) and [`models/kokoro/NOTICE`](models/kokoro/NOTICE). The model is not affiliated with or endorsed by hexgrad.
 
 ## Acknowledgments
 
-[webrtc-rs/rtc](https://github.com/webrtc-rs/rtc), [Axum](https://github.com/tokio-rs/axum) and Tokio, [Vue.js](https://vuejs.org/), [OpenTelemetry](https://opentelemetry.io/), [Grafana](https://grafana.com/), [ONNX Runtime](https://onnxruntime.ai/), [MediaPipe](https://developers.google.com/mediapipe), and [Best-README-Template](https://github.com/othneildrew/Best-README-Template).
+[webrtc-rs/rtc](https://github.com/webrtc-rs/rtc), [Axum](https://github.com/tokio-rs/axum) and Tokio, [Vue.js](https://vuejs.org/), [OpenTelemetry](https://opentelemetry.io/), [Grafana](https://grafana.com/), [ONNX Runtime](https://onnxruntime.ai/), [MediaPipe](https://developers.google.com/mediapipe), [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M), [misaki](https://github.com/hexgrad/misaki), [kokoro-onnx](https://github.com/thewh1teagle/kokoro-onnx), and [Best-README-Template](https://github.com/othneildrew/Best-README-Template).
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
