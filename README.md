@@ -60,6 +60,19 @@
 
 For SFU internals, API reference, data models, and the full environment variable list, see the [documentation](docs/md/index.md).
 
+The backend is a Cargo workspace under `backend/crates`:
+
+| Crate     | Responsibility                                                        |
+| --------- | --------------------------------------------------------------------- |
+| `common`  | Logging, telemetry, database tracing, JWT and config helpers          |
+| `models`  | PostgreSQL models and connection pool                                 |
+| `ai`      | Local speech-to-text and text-to-speech (ONNX)                        |
+| `media`   | SFU, WebRTC peer, recording, and the AI room assistant                |
+| `api`     | HTTP routes, authentication, metrics, and WebSocket signaling         |
+| `server`  | Binary entry point (`cargo run` defaults to this crate)               |
+
+Build only what you need, for example `cargo check -p models` or `cargo check -p api`.
+
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ## Getting Started
@@ -109,7 +122,7 @@ For SFU internals, API reference, data models, and the full environment variable
 
 5. Create a `vidcall` database and apply [`backend/migrations/01-init.sql`](backend/migrations/01-init.sql).
 
-   > Migration files are still being consolidated. Verify the tables referenced in [`backend/src/models/constant.rs`](backend/src/models/constant.rs) before starting the backend.
+   > Migration files are still being consolidated. Verify the tables referenced in [`backend/crates/models/src/constant.rs`](backend/crates/models/src/constant.rs) before starting the backend.
 
 6. Set up the Python environment for the local speech-to-text worker:
 

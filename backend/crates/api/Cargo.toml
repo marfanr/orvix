@@ -1,0 +1,37 @@
+# SPDX-FileCopyrightText: 2026 Mohammad Arfan
+#
+# SPDX-License-Identifier: AGPL-3.0
+
+[package]
+name = "api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+common = { workspace = true }
+media = { workspace = true }
+models = { workspace = true }
+argon2 = { workspace = true }
+axum = { workspace = true }
+axum-extra = { workspace = true }
+chrono = { workspace = true }
+cookie = { workspace = true }
+dashmap = { workspace = true }
+deadpool-postgres = { workspace = true }
+futures-util = { workspace = true }
+headers = { workspace = true }
+http = { workspace = true }
+metrics = { workspace = true }
+metrics-exporter-prometheus = { workspace = true }
+serde = { workspace = true }
+sonic-rs = { workspace = true }
+tokio = { workspace = true }
+tokio-postgres = { workspace = true }
+tower-http = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+validator = { workspace = true }
+
+[target.'cfg(not(target_env = "msvc"))'.dependencies]
+jemalloc-ctl = "0.5"
