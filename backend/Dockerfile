@@ -1,13 +1,13 @@
-FROM rust:1.82-alpine AS builder
+FROM rust:1.90-alpine AS builder
 
 WORKDIR /app
 
 RUN apk add --no-cache musl-dev pkgconfig openssl-dev openssl-libs-static
 
 COPY Cargo.toml Cargo.lock* ./
-COPY src ./src
+COPY crates ./crates
 
-RUN cargo build --release --target x86_64-unknown-linux-musl
+RUN cargo build --release --target x86_64-unknown-linux-musl -p backend
 
 FROM alpine:3.20
 
