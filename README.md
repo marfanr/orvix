@@ -111,18 +111,27 @@ Build only what you need, for example `cargo check -p models` or `cargo check -p
 
    Also set `POSTGRES_PASSWORD`. All other variables have defaults; see the [docs](docs/md/index.md) for the full list.
 
-4. Start PostgreSQL (and optionally the observability stack):
+4. Start PostgreSQL and apply the database migrations:
 
    ```sh
-   docker compose up -d etcd postgres
+   docker compose up -d etcd postgres db-init
+   ```
 
-   # Optional
+   The `db-init` service waits for the primary, creates the `vidcall` database if it does not exist, and applies [`backend/migrations/01-init.sql`](backend/migrations/01-init.sql). See [Database migrations](#database-migrations) for manual and incremental migration steps.
+
+   Optionally start the observability stack:
+
+   ```sh
    docker compose up -d otel-collector tempo loki prometheus grafana
    ```
 
-5. Create a `vidcall` database and apply [`backend/migrations/01-init.sql`](backend/migrations/01-init.sql).
+5. (Optional) Verify the schema:
 
-   > Migration files are still being consolidated. Verify the tables referenced in [`backend/crates/models/src/constant.rs`](backend/crates/models/src/constant.rs) before starting the backend.
+   ```sh
+   docker exec postgres psql -U postgres -d vidcall -c '\dt'
+   ```
+
+   You should see the `users`, `refresh_tokens`, and `room` tables.
 
 6. Set up the Python environment for the local speech-to-text worker:
 
