@@ -37,7 +37,7 @@ const onSubmit = handleSubmit(async (values) => {
   loading.value = true
   submitError.value = ''
   try {
-    await api.post('/user/', {
+    await api.post('/user', {
       username: values.username,
       email: values.email,
       password: values.password,
