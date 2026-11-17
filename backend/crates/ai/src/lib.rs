@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Mohammad Arfan
+//
+// SPDX-License-Identifier: AGPL-3.0
+
 mod constant;
 pub mod onnx;
 pub mod stt;

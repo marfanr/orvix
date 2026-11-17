@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Mohammad Arfan
+//
+// SPDX-License-Identifier: AGPL-3.0
+
 use ort::{session::Session, value::Tensor};
 use std::{
     collections::HashMap,

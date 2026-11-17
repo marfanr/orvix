@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Mohammad Arfan
+#
+# SPDX-License-Identifier: AGPL-3.0
+
 [package]
 name = "ai"
 version.workspace = true

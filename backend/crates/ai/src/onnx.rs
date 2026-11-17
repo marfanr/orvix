@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Mohammad Arfan
+//
+// SPDX-License-Identifier: AGPL-3.0
+
 use std::error::Error as StdError;
 use std::fs;
 use std::path::{Path, PathBuf};
