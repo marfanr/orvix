@@ -104,7 +104,6 @@ const helpOpen = computed(() => helpHovered.value || helpPinned.value)
   border-radius: var(--radius-md);
   font-size: var(--text-sm);
   cursor: pointer;
-
 }
 
 .select-custom option:hover,
@@ -114,6 +113,7 @@ const helpOpen = computed(() => helpHovered.value || helpPinned.value)
 
 .select-custom option:checked {
   background: var(--color-primary);
+  color: white;
   font-weight: 600;
 }
 
