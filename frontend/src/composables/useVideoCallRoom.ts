@@ -103,6 +103,11 @@ export function useVideoCallRoom(getRoomParam: () => string | string[] | undefin
         if (target) target.speaking = active
         break
       }
+
+      // TODO!: move into own data_channel
+      case 'transcript': {
+        callStore.addTranscript(data.transcript)
+      }
     }
   }
 

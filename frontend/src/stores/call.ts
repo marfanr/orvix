@@ -160,6 +160,23 @@ export const useCallStore = defineStore('call', () => {
 
   const viewLayout = ref<ViewLayoutMode>(ViewLayoutMode.Speaker)
 
+  let transcriptSeq = 0
+
+  const transcript = ref<{
+      id: number;
+      text: string;
+  }[]>([]);
+
+  function addTranscript(text: string) {
+      const id = ++transcriptSeq
+
+      transcript.value.push({ id, text })
+
+      setTimeout(() => {
+          transcript.value = transcript.value.filter(t => t.id !== id)
+      }, 1000)
+  }
+
   return {
     room,
     participants,
@@ -190,5 +207,7 @@ export const useCallStore = defineStore('call', () => {
     closeChat,
     outputStream,
     viewLayout,
+    transcript,
+    addTranscript
   }
 })

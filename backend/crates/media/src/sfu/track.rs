@@ -46,10 +46,10 @@ struct VoiceActivity {
 }
 
 #[derive(Debug, Serialize)]
-struct Transcribe {
+struct Transcript {
     #[serde(rename = "type")]
     pub event_type: &'static str,
-    pub transcribe: String,
+    pub transcript: String,
 }
 
 pub struct PublishedTrack {
@@ -221,25 +221,35 @@ impl PublishedTrack {
         }
 
         // TODO: is transcribt enable for specific user/peer
-        let asr = self.asr.get_or_init(|| {
-            Some(AsrHandle::spawn(move |text| {
-                // tracing::info!(%text, "transcript");
-                // _ = self
-                //     .sender_peer
-                //     .room
-                //     .broadcast_control(
-                //         Uuid::nil(),
-                //         &VoiceActivity {
-                //             event_type: "transcribe",
-                //             m: conn_id,
-                //         },
-                //     )
-                //     .await;
-            }))
-        });
+        let is_opus = self.kind == RtpCodecKind::Audio
+            && self.codec.load().mime_type.eq_ignore_ascii_case("audio/opus");
 
-        if let Some(asr) = asr {
-            asr.push(pkt.payload.clone());
+        if is_opus {
+            let room = Arc::clone(&self.sender_peer.room);
+            let rt = tokio::runtime::Handle::current();
+
+            let asr = self.asr.get_or_init(|| {
+                Some(AsrHandle::spawn(move |text| {
+                    let room = Arc::clone(&room);
+                    let rt = rt.clone();
+
+                    rt.spawn(async move {
+                        _ = room
+                            .broadcast_control(
+                                Uuid::nil(),
+                                &Transcript {
+                                    event_type: "transcript",
+                                    transcript: text,
+                                },
+                            )
+                            .await;
+                    });
+                }))
+            });
+
+            if let Some(asr) = asr {
+                asr.push(pkt.payload.clone());
+            }
         }
 
         let d = parse_vp9(&pkt.payload);

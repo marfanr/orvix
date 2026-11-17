@@ -140,7 +140,7 @@ fn worker_count() -> usize {
         .ok()
         .and_then(|v| v.parse().ok())
         .filter(|n| *n > 0)
-        .unwrap_or(2)
+        .unwrap_or(1)
 }
 
 fn start_worker(id: usize) -> Option<WhisperWorker> {

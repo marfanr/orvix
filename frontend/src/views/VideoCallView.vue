@@ -20,6 +20,7 @@ import { recordRecentMeeting } from '@/lib/recentMeetings'
 import { userIdFromToken } from '@/lib/token'
 import { storeToRefs } from 'pinia'
 import CallControls from '@/components/video-call/CallControls.vue'
+import TranscriptFloating from '@/components/video-call/TranscriptFloating.vue'
 
 const route = useRoute()
 
@@ -106,14 +107,7 @@ const { isChatOpen } = storeToRefs(store)
     <members-popup v-if="membersPanel.isOpen" />
     <ConfigPopup v-if="configPanel.isOpen" />
 
-    <!-- transcript -->
-    <Teleport to="body">
-      <div class="absolute bottom-25 left-0 right-0 flex justify-center">
-        <div class="bg-black/80 rounded-md text-white p-1">
-          Hello World
-        </div>
-      </div>
-    </Teleport>
+      <TranscriptFloating />
 
     <CallControls
       :camera-off="cameraOff"

@@ -17,12 +17,6 @@ from faster_whisper import WhisperModel
 
 MIN_AVG_LOGPROB = float(os.environ.get("WHISPER_MIN_LOGPROB", "-1.0"))
 MAX_NO_SPEECH = float(os.environ.get("WHISPER_MAX_NO_SPEECH", "0.6"))
-HOTWORDS = os.environ.get("WHISPER_HOTWORDS", "chess")
-INITIAL_PROMPT = os.environ.get(
-    "WHISPER_PROMPT",
-    "A conversation about chess, moves, pieces and games.",
-)
-
 
 def read_exact(n: int):
     buf = bytearray()
@@ -41,7 +35,7 @@ def write_frame(text: str) -> None:
 
 
 def main() -> int:
-    model_name = os.environ.get("WHISPER_MODEL", "tiny.en")
+    model_name = os.environ.get("WHISPER_MODEL", "base.en")
     language = os.environ.get("WHISPER_LANG", "en") or None
     if language == "auto":
         language = None
@@ -50,9 +44,9 @@ def main() -> int:
 
     model = WhisperModel(
         model_name,
-        device=os.environ.get("WHISPER_DEVICE", "cpu"),
+        device=os.environ.get("WHISPER_DEVICE", "auto"),
         compute_type=os.environ.get("WHISPER_COMPUTE", "int8"),
-        cpu_threads=int(os.environ.get("WHISPER_THREADS", "2")),
+        cpu_threads=int(os.environ.get("WHISPER_THREADS", "8")),
         download_root=os.environ.get("WHISPER_DOWNLOAD_ROOT") or None,
     )
     beam_size = int(os.environ.get("WHISPER_BEAM", "5"))
@@ -92,12 +86,10 @@ def main() -> int:
             language=language,
             task="transcribe",
             beam_size=beam_size,
-            best_of=2,
+            best_of=3,
             temperature=(0.0, 0.2, 0.4),
             condition_on_previous_text=False,
             without_timestamps=True,
-            initial_prompt=INITIAL_PROMPT or None,
-            hotwords=HOTWORDS or None,
             vad_filter=True,
             no_speech_threshold=MAX_NO_SPEECH,
             log_prob_threshold=-1.0,
