@@ -171,37 +171,6 @@ export function useWebRTC(
     }
   }
 
-  const getPrefredCodecsAndModes = async () => {
-    const codecs = ['video/VP9', 'video/AV1', 'video/VP8', 'video/H264']
-    const modes = ['L3T3_KEY', 'L2T3_KEY', 'L2T1', 'L1T3', 'L1T2', 'L1T1']
-
-    for (const contentType of codecs) {
-      for (const scalabilityMode of modes) {
-        try {
-          const info = await navigator.mediaCapabilities.encodingInfo({
-            type: 'webrtc',
-            video: {
-              contentType,
-              width: 640,
-              height: 480,
-              bitrate: 1_000_000,
-              framerate: 30,
-              scalabilityMode: scalabilityMode,
-            },
-          })
-
-          if (info.supported) {
-            console.log(contentType, scalabilityMode, info)
-            // return [contentType, scalabilityMode]
-            break
-          }
-        } catch {
-          continue
-        }
-      }
-    }
-  }
-
   /// attach local media tracks
   const addLocalStream = async (stream: MediaStream): Promise<boolean> => {
     debug(
@@ -219,10 +188,7 @@ export function useWebRTC(
         continue
       }
 
-      const selected = await getPrefredCodecsAndModes()
-
       const useSvc = (await isSvcSupported()) && form.value.svc
-      console.log('selected', selected)
 
       if (track.kind === 'video') {
         const encodings = useSvc
