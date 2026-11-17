@@ -60,13 +60,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         resolve_announce_ip().await,
     );
 
-    // let args = handle_args();
-    // if args.is_running_migration {
-    //     // TODO: create migration
-    //     todo!("run migrations");
-    //     return Ok(());
-    // }
-
     init_metrics();
 
     run_server(state, 8080).await?;

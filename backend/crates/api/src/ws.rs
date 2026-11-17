@@ -341,9 +341,6 @@ async fn handle_socket(socket: WebSocket, _user_agent: String, state: ServerStat
                                 }
                                 // only forwarding the message from client
                                 Ok(WsMsg::AnswerRequest {conn_id, room_id}) => {
-                                    // Clone the handles out of the DashMap guards before
-                                    // awaiting: holding a guard across `.await` can block
-                                    // every other task that touches the same shard.
                                     let joiner_tx = state
                                         .ws_conn
                                         .get(&conn_id)
@@ -354,10 +351,6 @@ async fn handle_socket(socket: WebSocket, _user_agent: String, state: ServerStat
                                         .map(|r| Arc::clone(r.value()));
 
                                     if let (Some(joiner_tx), Some(room)) = (joiner_tx, room) {
-                                        // Only admit a connection that is still a member.
-                                        // The joiner may have disconnected while the host was
-                                        // deciding; announcing it afterwards would broadcast a
-                                        // `welcome` *after* its `disconnect` -> ghost member.
                                         let peer = room.peers.get(&conn_id).map(|p| {
                                             (Arc::clone(&p.username), Arc::clone(p.value()))
                                         });
@@ -371,10 +364,6 @@ async fn handle_socket(socket: WebSocket, _user_agent: String, state: ServerStat
                                             {
                                                 warn!("sync room member: {e}");
                                             } else {
-                                                // Admit only after `join` and `sync` are
-                                                // queued: from now on tracks may attach to
-                                                // this peer, and its client must already know
-                                                // the room members.
                                                 peer.admit();
                                                 // The joiner may have joined with no local
                                                 // media, so it will not necessarily send an
@@ -413,8 +402,6 @@ async fn handle_socket(socket: WebSocket, _user_agent: String, state: ServerStat
 
 
                                     if let Some(p) = room_peer {
-                                        // client('PUBLISHER') media masuk ke leg SUBSCRIBER,
-                                        // client('SUBSCRIBER') menerima dari leg PUBLISHER
                                         let pc_type = if from == "SUBSCRIBER" {
                                             media::peer::PeerType::PUBLISHER
                                         } else {
@@ -453,9 +440,7 @@ async fn handle_socket(socket: WebSocket, _user_agent: String, state: ServerStat
     // clear connection
     state.ws_conn.remove(&conn_id);
 
-    // Take the room out of the conn map first: this releases the DashMap guard
-    // before any `.await` (holding it across awaits can block other tasks) and
-    // makes stale `conn_id -> room` lookups stop resolving immediately.
+    // Take the room out of the conn map first
     let room = state.conn_to_rooms.remove(&conn_id).map(|(_, room)| room);
 
     if let Some(room) = room {
@@ -481,11 +466,6 @@ async fn handle_socket(socket: WebSocket, _user_agent: String, state: ServerStat
                 .to_string(),
             ),
         );
-
-        // Delete the room only if it is still empty. `remove_if` is atomic per
-        // shard and `can_be_removed` also accounts for joins that are in flight,
-        // so a joiner that grabbed this room cannot end up in an orphaned room.
-        // Note: the key is `room.id`, not the `conn_to_rooms` key.
 
         // TODO: kill assistant from room
         state
