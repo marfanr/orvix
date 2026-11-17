@@ -27,13 +27,13 @@ pub const CREATE_ROOM_SQL: &str = "INSERT INTO room (owner_id, alias, passcode, 
                  VALUES ($1, $2, $3, COALESCE($4, 'Untitled Meeting'), COALESCE($5::jsonb, '{}'::jsonb))
                  RETURNING id";
 pub const GET_ROOM_BY_ALIAS_SQL: &str =
-    "SELECT r.id, r.alias, r.owner_id, r.passcode, r.title, r.options, u.username AS owner,  r.start_at
+    "SELECT r.id, r.alias, r.owner_id, r.passcode, r.title, r.options, u.username AS owner, r.start_at, r.mode
      FROM room r
      JOIN users u ON u.id = r.owner_id
      WHERE r.alias = $1";
 
 pub const GET_ROOM_BY_ID_SQL: &str =
-    "SELECT r.id, r.alias, r.owner_id, r.passcode, r.title, r.options, u.username AS owner, r.start_at
+    "SELECT r.id, r.alias, r.owner_id, r.passcode, r.title, r.options, u.username AS owner, r.start_at, r.mode
      FROM room r
      JOIN users u ON u.id = r.owner_id
      WHERE r.id = $1";

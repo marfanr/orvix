@@ -5,9 +5,11 @@
 use crate::constant::{
     CREATE_ROOM_SQL, DEL_ROOM_BY_ID_SQL, GET_ROOM_BY_ALIAS_SQL, GET_ROOM_BY_ID_SQL,
 };
+use crate::room::RoomMode::Scheduled;
 use crate::{FromRow, StandardModel, fetch_one};
 use crate::{ModelError, exec};
 use async_trait::async_trait;
+use bytes::BufMut;
 use chrono::{DateTime, Utc};
 use deadpool_postgres::Object;
 use serde::de::DeserializeOwned;
@@ -23,6 +25,57 @@ pub struct RoomOption {
     pub waiting_room: Option<bool>,
 }
 
+use postgres_types::{FromSql, IsNull, Kind, ToSql, Type};
+use std::error::Error;
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum RoomMode {
+    Scheduled,
+    Direct,
+}
+
+impl<'a> FromSql<'a> for RoomMode {
+    fn from_sql(_ty: &Type, raw: &'a [u8]) -> Result<Self, Box<dyn Error + Sync + Send>> {
+        match raw {
+            b"SCHEDULED" => Ok(Self::Scheduled),
+            b"DIRECT" => Ok(Self::Direct),
+            _ => Err("invalid ROOM_MODE value".into()),
+        }
+    }
+
+    fn accepts(ty: &Type) -> bool {
+        ty.name() == "room_mode" && ty.schema() == "public" && matches!(ty.kind(), Kind::Enum(_))
+    }
+}
+
+impl ToSql for RoomMode {
+    fn to_sql(
+        &self,
+        _ty: &Type,
+        out: &mut bytes::BytesMut,
+    ) -> Result<IsNull, Box<dyn Error + Sync + Send>> {
+        out.put_slice(match self {
+            Self::Scheduled => b"SCHEDULED",
+            Self::Direct => b"DIRECT",
+        });
+
+        Ok(IsNull::No)
+    }
+
+    fn accepts(ty: &Type) -> bool {
+        <Self as FromSql>::accepts(ty)
+    }
+
+    fn to_sql_checked(
+        &self,
+        ty: &Type,
+        out: &mut bytes::BytesMut,
+    ) -> Result<IsNull, Box<dyn Error + Sync + Send>> {
+        postgres_types::ToSql::to_sql(self, ty, out)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Room {
     pub id: Option<Uuid>,
@@ -33,6 +86,7 @@ pub struct Room {
     pub title: Option<Arc<str>>,
     pub start_at: Option<DateTime<Utc>>,
     pub options: Option<Value>,
+    pub mode: RoomMode,
 }
 
 impl Room {
@@ -52,6 +106,7 @@ impl Room {
             title: title.map(Arc::from),
             options: option,
             start_at: None,
+            mode: Scheduled,
         }
     }
 
@@ -135,6 +190,7 @@ impl FromRow for Room {
         let options: Option<Value> = r.try_get("options").map_err(ModelError::from)?;
         let owner: Option<String> = r.try_get("owner").map_err(ModelError::from)?;
         let start_at: Option<DateTime<Utc>> = r.try_get("start_at").map_err(ModelError::from)?;
+        let mode: RoomMode = r.try_get("mode").map_err(ModelError::from)?;
 
         Ok(Self {
             id: Some(id),
@@ -145,6 +201,7 @@ impl FromRow for Room {
             title: title.map(Arc::from),
             options,
             start_at,
+            mode,
         })
     }
 }

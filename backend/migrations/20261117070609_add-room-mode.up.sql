@@ -1,0 +1,10 @@
+-- Add up migration script here
+
+CREATE TYPE ROOM_MODE AS ENUM (
+    'SCHEDULED',
+    'DIRECT'
+);
+
+ALTER TABLE room
+ADD COLUMN mode ROOM_MODE
+NOT NULL DEFAULT 'DIRECT';

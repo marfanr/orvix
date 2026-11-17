@@ -33,7 +33,8 @@ CREATE TABLE IF NOT EXISTS room (
     passcode text,
     title    text NOT NULL DEFAULT 'Untitled Meeting',
     options  jsonb NOT NULL DEFAULT '{}'::jsonb,
-    start_at timestamptz
+    start_at timestamptz,
+    until_at timestamptz
 );
 
 CREATE INDEX IF NOT EXISTS room_owner_id_idx
