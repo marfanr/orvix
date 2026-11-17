@@ -107,7 +107,7 @@ const { isChatOpen } = storeToRefs(store)
     <members-popup v-if="membersPanel.isOpen" />
     <ConfigPopup v-if="configPanel.isOpen" />
 
-      <TranscriptFloating />
+    <TranscriptFloating />
 
     <CallControls
       :camera-off="cameraOff"

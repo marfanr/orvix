@@ -135,14 +135,6 @@ struct AsrPool {
 
 static ASR_POOL: OnceLock<AsrPool> = OnceLock::new();
 
-fn worker_count() -> usize {
-    env::var("ASR_WORKERS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .filter(|n| *n > 0)
-        .unwrap_or(1)
-}
-
 fn start_worker(id: usize) -> Option<WhisperWorker> {
     match WhisperWorker::spawn() {
         Ok(w) => {
@@ -187,15 +179,12 @@ fn asr_pool() -> &'static AsrPool {
         let (tx, rx) = mpsc::unbounded_channel::<AsrJob>();
         let rx = Arc::new(Mutex::new(rx));
 
-        for i in 0..worker_count() {
-            let rx = Arc::clone(&rx);
-            let spawned = std::thread::Builder::new()
-                .name(format!("asr-worker-{i}"))
-                .spawn(move || run_worker(i, rx));
+        let spawned = std::thread::Builder::new()
+            .name(format!("asr-worker"))
+            .spawn(move || run_worker(0, rx));
 
-            if let Err(e) = spawned {
-                tracing::error!("asr: spawn thread {i}: {e}");
-            }
+        if let Err(e) = spawned {
+            tracing::error!("asr: spawn thread : {e}");
         }
 
         AsrPool { tx }
