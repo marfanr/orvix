@@ -115,7 +115,6 @@ pub async fn run_server(state: ServerState, port: u16) -> std::io::Result<()> {
         .route("/metrics", axum::routing::get(metrics_handler))
         .merge(Api::routes())
         .with_state(state)
-        .layer(TraceLayer::new_for_http())
         .layer(middleware::from_fn(track_metrics))
         .layer(cors);
 
