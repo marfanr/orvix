@@ -451,10 +451,6 @@ async fn handle_socket(socket: WebSocket, _user_agent: String, state: ServerStat
             .map(|p| p.username.clone())
             .unwrap_or(Arc::from("Anonymous"));
 
-        // Remove the peer BEFORE broadcasting the disconnect. `sync_room_member`
-        // snapshots `room.peers`, so if the disconnect is broadcast first, a peer
-        // joining in between would receive a member list that still contains this
-        // conn and would never see the disconnect event -> ghost member.
         room.drop_peer(conn_id).await;
 
         room.broadcast(
@@ -467,10 +463,17 @@ async fn handle_socket(socket: WebSocket, _user_agent: String, state: ServerStat
             ),
         );
 
-        // TODO: kill assistant from room
         state
             .rooms
             .remove_if(&room.id, |_, r| Arc::ptr_eq(r, &room) && r.can_be_removed());
+
+        // if let Some(r) = removed {
+        //     if let Ok(db) = state.pool.get().map_err(|e| WsError::from(e)).await {
+        //         _ = models::room::Room::drop(&db, r.0).await;
+        //     }
+        // }
+
+        // TODO: kill assistant from room
     }
 
     info!("ws disconnected");
