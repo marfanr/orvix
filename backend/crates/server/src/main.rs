@@ -17,10 +17,12 @@ fn init_rustls() {
 }
 
 #[derive(Default)]
+#[allow(dead_code)]
 struct ArgsParsed {
     is_running_migration: bool,
 }
 
+#[allow(dead_code)]
 fn handle_args() -> ArgsParsed {
     let mut parsed = ArgsParsed::default();
     let args: Vec<String> = env::args().collect();

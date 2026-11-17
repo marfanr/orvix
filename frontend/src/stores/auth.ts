@@ -20,7 +20,6 @@ export const useAuthStore = defineStore('auth', () => {
 
   async function refreshAccessToken(): Promise<boolean> {
     try {
-      // refresh token lives in an httpOnly cookie (path=/auth/refresh)
       const res = await api.post('/auth/refresh')
       const newAccessToken = res.data?.token
 

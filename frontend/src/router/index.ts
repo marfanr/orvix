@@ -55,10 +55,11 @@ router.beforeEach(async (to) => {
   const auth = useAuthStore()
   const isAuthPage = to.path === '/signin' || to.path === '/signup'
 
-  if (!isAuthPage && !auth.authenticated) {
-    await auth.refreshAccessToken()
-  }
+  await auth.refreshAccessToken()
 
+  if (isAuthPage && auth.authenticated) {
+    return { path: '/' }
+  }
   if (to.meta.requiresAuth && !auth.authenticated) {
     return { path: '/signin' }
   }

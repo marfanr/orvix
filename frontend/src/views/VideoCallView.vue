@@ -1,7 +1,6 @@
 <script setup lang="ts">
-import { computed, watch } from 'vue'
+import { computed, watch, Teleport } from 'vue'
 import { useRoute } from 'vue-router'
-import CallControls from '@/components/video-call/CallControls.vue'
 import CallHeader from '@/components/video-call/CallHeader.vue'
 import CallStatusScreen from '@/components/video-call/CallStatusScreen.vue'
 import FloatingReactions from '@/components/video-call/FloatingReactions.vue'
@@ -20,6 +19,7 @@ import { useAuthStore } from '@/stores/auth'
 import { recordRecentMeeting } from '@/lib/recentMeetings'
 import { userIdFromToken } from '@/lib/token'
 import { storeToRefs } from 'pinia'
+import CallControls from '@/components/video-call/CallControls.vue'
 
 const route = useRoute()
 
@@ -105,6 +105,15 @@ const { isChatOpen } = storeToRefs(store)
     <NewMessageToast :message="newMessageData" @resolve="resolveNewMessage" />
     <members-popup v-if="membersPanel.isOpen" />
     <ConfigPopup v-if="configPanel.isOpen" />
+
+    <!-- transcript -->
+    <Teleport to="body">
+      <div class="absolute bottom-25 left-0 right-0 flex justify-center">
+        <div class="bg-black/80 rounded-md text-white p-1">
+          Hello World
+        </div>
+      </div>
+    </Teleport>
 
     <CallControls
       :camera-off="cameraOff"

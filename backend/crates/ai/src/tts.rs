@@ -165,7 +165,7 @@ fn infer(dir: &Path, tokens: &[i64], voice: &str) -> Results<Vec<f32>> {
     input_ids.extend_from_slice(tokens);
     input_ids.push(0);
 
-    let mut session = session(dir, "kokoro/model.onnx")?
+    let mut session = session(dir, "model.onnx")?
         .lock()
         .map_err(|_| "session mutex poisoned")?;
 

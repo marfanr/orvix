@@ -69,7 +69,7 @@ pub async fn join_to_room(room: Arc<RoomSfu>) -> Result<(), Box<dyn Error>> {
     let packets = match tokio::task::spawn_blocking(test_onnx).await {
         Ok(Ok(p)) => p,
         Ok(Err(e)) => {
-            tracing::warn!("tts gagal: {e}");
+            tracing::warn!("tts failed: {e}");
             return Ok(());
         }
         Err(e) => {

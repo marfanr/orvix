@@ -9,7 +9,6 @@ use axum::extract::ws::Message;
 use axum::{Json, http::StatusCode, response::IntoResponse};
 use deadpool_postgres::PoolError;
 use tokio::sync::mpsc::error::SendError;
-use tokio_postgres::error::DbError;
 use tracing::error;
 use validator::ValidationErrors;
 

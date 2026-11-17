@@ -26,7 +26,6 @@ use crate::{
 use common::utils::{AccessClaims, validate_uuid};
 use models;
 use models::StandardModel;
-use models::room::RoomOption;
 
 #[derive(Deserialize, Validate)]
 struct CreateRoomReq<'a> {

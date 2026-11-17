@@ -45,6 +45,13 @@ struct VoiceActivity {
     pub active: bool,
 }
 
+#[derive(Debug, Serialize)]
+struct Transcribe {
+    #[serde(rename = "type")]
+    pub event_type: &'static str,
+    pub transcribe: String,
+}
+
 pub struct PublishedTrack {
     pub publisher: Uuid,
     pub kind: RtpCodecKind,
@@ -216,7 +223,18 @@ impl PublishedTrack {
         // TODO: is transcribt enable for specific user/peer
         let asr = self.asr.get_or_init(|| {
             Some(AsrHandle::spawn(move |text| {
-                tracing::info!(%text, "transcript");
+                // tracing::info!(%text, "transcript");
+                // _ = self
+                //     .sender_peer
+                //     .room
+                //     .broadcast_control(
+                //         Uuid::nil(),
+                //         &VoiceActivity {
+                //             event_type: "transcribe",
+                //             m: conn_id,
+                //         },
+                //     )
+                //     .await;
             }))
         });
 
