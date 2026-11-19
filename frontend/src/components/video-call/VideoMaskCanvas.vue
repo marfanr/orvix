@@ -279,7 +279,6 @@ function handleWorkerMessage(e: MessageEvent<{ func: string; track?: MediaStream
       break
 
     case 'published': {
-      console.log("published")
       const s = outputStream()
       if (s) emits('stream', s)
       break

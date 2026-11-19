@@ -1,67 +1,96 @@
 <!--
 SPDX-FileCopyrightText: 2026 Mohammad Arfan
-
 SPDX-License-Identifier: AGPL-3.0
 -->
 
 <script setup lang="ts">
 import type { Participant } from '@/types/video-call'
-import { nextTick, ref, watch, type ComponentPublicInstance } from 'vue'
+import { nextTick, onMounted, onBeforeUnmount, ref, watch, type ComponentPublicInstance } from 'vue'
 
 const props = defineProps<{
   participant: Participant
 }>()
 
 const audioRef = ref<HTMLAudioElement | null>(null)
-// const audioContext = new AudioContext()
-// // let meteredStream: MediaStream | null = null
-// // let stopLevelMeter: (() => void) | undefined
+const audioUnlocked = ref(false)
+const audioContext = new AudioContext()
 
-// // const createLevelMeter = () => {
-// //   console.log('create levl emetr')
-// //   if (!meteredStream) return
-// //   const source = audioContext.createMediaStreamSource(meteredStream)
-// //   const analyzer = audioContext.createAnalyser()
+let source: MediaStreamAudioSourceNode | null = null
+let highPass: BiquadFilterNode | null = null
+let lowPass: BiquadFilterNode | null = null
+let gain: GainNode | null = null
+let unmounted = false
 
-// //   analyzer.fftSize = 512
-// //   source.connect(analyzer)
+function unlockAudio() {
+  if (unmounted) return
+  audioUnlocked.value = true
+  audioContext.resume().catch(() => {})
+  setAudioStream()
+}
 
-// //   const buf = new Float32Array(analyzer.fftSize)
-// //   const timer = setInterval(() => {
-// //     analyzer.getFloatTimeDomainData(buf)
+function audioPipeline(stream: MediaStream): MediaStream {
+  source?.disconnect()
+  highPass?.disconnect()
+  lowPass?.disconnect()
+  gain?.disconnect()
 
-// //     let sum = 0
-// //     for (let i = 0; i < buf.length; i++) sum += buf[i]! * buf[i]!
-// //     const level = Math.sqrt(sum / buf.length)
-// //     console.log('level', level)
-// //   }, 100)
-// //   return () => {
-// //     clearInterval(timer)
-// //     source.disconnect()
-// //     analyzer.disconnect()
-// //   }
-// // }
+  source = audioContext.createMediaStreamSource(stream)
+
+  highPass = audioContext.createBiquadFilter()
+  highPass.type = 'highpass'
+  highPass.frequency.value = 100
+  highPass.Q.value = 0.6
+
+  lowPass = audioContext.createBiquadFilter()
+  lowPass.type = 'lowpass'
+  lowPass.frequency.value = 10000
+
+  gain = audioContext.createGain()
+  gain.gain.value = 1.1
+
+  const destination = audioContext.createMediaStreamDestination()
+
+  source.connect(highPass)
+  highPass.connect(lowPass)
+
+  // Dry signal
+  lowPass.connect(gain)
+
+  gain.connect(destination)
+
+  return destination.stream
+}
 
 async function setAudioStream(): Promise<void> {
   await nextTick()
+  if (unmounted) return
+
   const { stream, muted, id } = props.participant
-  if (!audioRef.value || !stream) {
-    // if (stopLevelMeter) stopLevelMeter()
-    return
-  }
+  const el = audioRef.value
 
-  if (id !== 0) {
-    audioRef.value.muted = muted
-    const el = audioRef.value
-    if (el.srcObject !== stream) el.srcObject = stream
-    el.play().catch((err) => console.warn(`${el.tagName.toLowerCase()} play error:`, err))
-  }
+  if (!el || !stream || id === 0) return
 
-  // if (meteredStream !== stream) {
-  //   if (stopLevelMeter) stopLevelMeter()
-  //   meteredStream = stream
-  //   stopLevelMeter = createLevelMeter()
-  // }
+  el.muted = muted
+
+  try {
+    if (audioContext.state === 'suspended' && audioUnlocked.value) {
+      await audioContext.resume()
+    }
+
+    const processedStream = audioPipeline(stream)
+    el.srcObject = processedStream
+
+    if (audioUnlocked.value) {
+      await el.play()
+    }
+  } catch (err) {
+    console.warn('Audio pipeline error:', err)
+    el.srcObject = stream
+
+    if (audioUnlocked.value) {
+      el.play().catch(console.warn)
+    }
+  }
 }
 
 const setAudioRef = (el: Element | ComponentPublicInstance | null): void => {
@@ -69,9 +98,25 @@ const setAudioRef = (el: Element | ComponentPublicInstance | null): void => {
   if (audioRef.value) setAudioStream()
 }
 
+onMounted(() => {
+  window.addEventListener('click', unlockAudio, { once: true })
+})
+
+onBeforeUnmount(() => {
+  unmounted = true
+  window.removeEventListener('click', unlockAudio)
+
+  source?.disconnect()
+  highPass?.disconnect()
+  lowPass?.disconnect()
+  gain?.disconnect()
+
+  void audioContext.close().catch(() => {})
+})
+
 watch([() => props.participant.muted, () => props.participant.stream], setAudioStream)
 </script>
 
 <template>
-  <audio :ref="setAudioRef" autoplay playsinline />
+  <audio :ref="setAudioRef" autoplay playsinline muted />
 </template>
