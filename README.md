@@ -50,8 +50,9 @@
 - **In-call tools:** chat, emoji reactions, screen sharing, member list, and per-device media configuration.
 - **Authentication:** JWT access tokens with rotating refresh tokens and reuse detection.
 - **Recording:** server-side recording to disk (requires `ffmpeg`).
-- **Speech-to-text:** local transcription powered by [faster-whisper](https://github.com/SYSTRAN/faster-whisper).
+- **Speech-to-text:** local transcription powered by [pywhispercpp](https://github.com/absadiki/pywhispercpp).
 - **Text-to-speech:** local voices powered by [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) (Apache-2.0), with G2P via [misaki](https://github.com/hexgrad/misaki).
+- **AI assistant:** an in-meeting agent powered by [rig-core](https://github.com/0xPlaygrounds/rig) for model access and [graph-flow](https://github.com/a-agmon/rs-graph-llm) for multi-step task orchestration; invite it from the call controls.
 - **Background blur:** runs in the browser via [MediaPipe](https://ai.google.dev/edge/mediapipe/solutions/vision/image_segmenter).
 - **Observability:** OpenTelemetry, Prometheus, Loki, Tempo, and provisioned Grafana dashboards.
 
@@ -66,12 +67,14 @@ The backend is a Cargo workspace under `backend/crates`:
 | --------- | --------------------------------------------------------------------- |
 | `common`  | Logging, telemetry, database tracing, JWT and config helpers          |
 | `models`  | PostgreSQL models and connection pool                                 |
-| `ai`      | Local speech-to-text and text-to-speech (ONNX)                        |
+| `ai`      | Speech-to-text, text-to-speech, and the LLM agent runtime (rig-core + graph-flow) |
 | `media`   | SFU, WebRTC peer, recording, and the AI room assistant                |
 | `api`     | HTTP routes, authentication, metrics, and WebSocket signaling         |
 | `server`  | Binary entry point (`cargo run` defaults to this crate)               |
 
 Build only what you need, for example `cargo check -p models` or `cargo check -p api`.
+
+The assistant is an in-meeting agent rather than a normal participant. `media` spawns it when someone sends `invite_ai` over the control data channel, and `ai` executes its work: `rig-core` provides the model client for any OpenAI-compatible endpoint configured through `LLM_*`, while `graph-flow` models the agent's tasks, edges, and session state as a graph.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -109,7 +112,7 @@ Build only what you need, for example `cargo check -p models` or `cargo check -p
    openssl rand -base64 48   # JWT_REFRESH_SECRET
    ```
 
-   Also set `POSTGRES_PASSWORD`. All other variables have defaults; see the [docs](docs/md/index.md) for the full list.
+   Then fill in `POSTGRES_PASSWORD`, `ADMIN_PASSWORD`, and `REPLICATION_PASSWORD` as described in [Environment variables](#environment-variables). The TLS entries are written by `setup_certs.sh` automatically.
 
 4. Start PostgreSQL and apply the database migrations:
 
@@ -139,10 +142,42 @@ Build only what you need, for example `cargo check -p models` or `cargo check -p
    cd backend
    python3 -m venv .venv
    source .venv/bin/activate
+   pip install uv
    pip install -r requirements.txt
+   GGML_VULKAN=1 uv pip install --force-reinstall git+https://github.com/absadiki/pywhispercpp
    ```
 
-   The Whisper model is downloaded automatically on first run. Set `WHISPER_DOWNLOAD_ROOT` to control where models are cached.
+   `GGML_VULKAN=1` builds pywhispercpp with the Vulkan backend; drop it for a CPU-only build. The Whisper model is downloaded automatically on first run. Set `WHISPER_DOWNLOAD_ROOT` to control where models are cached.
+
+### Environment variables
+
+The backend loads `backend/.env` at startup. `setup_certs.sh` creates the file and fills the TLS entries, so you only need to add the secrets by hand.
+
+| Variable | Required | Default | Purpose |
+| --- | --- | --- | --- |
+| `POSTGRES_PASSWORD` | Yes | — | Password for the `postgres` superuser. Read by the backend and the database containers. |
+| `ADMIN_PASSWORD` | Yes (compose) | — | Password for the `admin` database role created by Spilo. Only used by `docker-compose.yml`. |
+| `REPLICATION_PASSWORD` | Yes (compose) | — | Password for the `standby` replication role created by Spilo. Only used by `docker-compose.yml`. |
+| `DATABASE_URL` | No | — | Convenience string for external clients. The backend ignores it and connects from the `POSTGRES_*` settings instead. |
+| `JWT_ACCESS_SECRET` | Yes | — | HMAC key for access tokens. Must be at least 32 bytes. |
+| `JWT_REFRESH_SECRET` | Yes | — | HMAC key for refresh tokens. Must be at least 32 bytes and differ from the access secret. |
+| `SSL_CERTIFICATE` | Yes (compose) | — | PEM server certificate handed to Postgres, with literal `\n` line breaks. |
+| `SSL_PRIVATE_KEY` | Yes (compose) | — | PEM private key matching `SSL_CERTIFICATE`. |
+| `PG_CA_CERT` | No | `certs/ca.crt` | CA bundle the backend uses to verify the Postgres TLS connection. |
+| `LLM_TOKEN` | No | — | Token for the AI assistant's OpenAI-compatible provider. |
+| `LLM_PROVIDER` | No | — | Label for the provider; informational only. |
+| `LLM_URL` | No | — | Base URL of the OpenAI-compatible API. |
+| `LLM_MODEL` | No | — | Model name passed to the provider. |
+
+Generate the secrets with:
+
+```sh
+openssl rand -hex 32    # POSTGRES_PASSWORD, ADMIN_PASSWORD, REPLICATION_PASSWORD
+openssl rand -base64 48 # JWT_ACCESS_SECRET
+openssl rand -base64 48 # JWT_REFRESH_SECRET
+```
+
+The backend refuses to start when either JWT secret is missing, shorter than 32 bytes, or identical to the other. Connection settings (`POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_POOL_SIZE`) default to `localhost`, `5432`, `vidcall`, `postgres`, and `32`; they do not need to be in `.env` for a local setup.
 
 ### Run
 
@@ -191,6 +226,6 @@ Third-party assets keep their own licenses and are not covered by the AGPL-3.0:
 
 ## Acknowledgments
 
-[webrtc-rs/rtc](https://github.com/webrtc-rs/rtc), [Axum](https://github.com/tokio-rs/axum) and Tokio, [Vue.js](https://vuejs.org/), [OpenTelemetry](https://opentelemetry.io/), [Grafana](https://grafana.com/), [ONNX Runtime](https://onnxruntime.ai/), [MediaPipe](https://developers.google.com/mediapipe), [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M), [misaki](https://github.com/hexgrad/misaki), [kokoro-onnx](https://github.com/thewh1teagle/kokoro-onnx), and [Best-README-Template](https://github.com/othneildrew/Best-README-Template).
+[webrtc-rs/rtc](https://github.com/webrtc-rs/rtc), [Axum](https://github.com/tokio-rs/axum) and Tokio, [Vue.js](https://vuejs.org/), [OpenTelemetry](https://opentelemetry.io/), [Grafana](https://grafana.com/), [ONNX Runtime](https://onnxruntime.ai/), [MediaPipe](https://developers.google.com/mediapipe), [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M), [misaki](https://github.com/hexgrad/misaki), [kokoro-onnx](https://github.com/thewh1teagle/kokoro-onnx), [rig](https://github.com/0xPlaygrounds/rig), [graph-flow](https://github.com/a-agmon/rs-graph-llm), and [Best-README-Template](https://github.com/othneildrew/Best-README-Template).
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
