@@ -42,7 +42,7 @@ export function useSignaling() {
   const sendOffer = (offer: string) => {
     ws.send({ type: 'offer', sdp: offer, peer_type: 'SUBSCRIBER' })
   }
-g
+
   const sendAnswer = (answer: string) => {
     ws.send({ type: 'answer', sdp: answer, peer_type: 'PUBLISHER' })
   }
