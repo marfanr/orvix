@@ -107,10 +107,10 @@ impl Mux {
         rx
     }
 
-    /// Binds a local ufrag to (conn, leg). Both legs of one conn each have
-    /// their own ufrag; all are kept.
     pub fn bind_ufrag(&self, id: Uuid, leg: PeerType, ufrag: String) {
-        self.ufrags.borrow_mut().insert(ufrag, (id, leg));
+        let mut ufrags = self.ufrags.borrow_mut();
+        ufrags.retain(|_, v| *v != (id, leg));
+        ufrags.insert(ufrag, (id, leg));
     }
 
     pub fn unregister(&self, id: Uuid) {

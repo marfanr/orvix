@@ -122,19 +122,14 @@ export function useWebRTC(
       })
     })
 
+    const PUB_ICE_RESTART_COOLDOWN_MS = 5_000
+    let lastPubIceRestart = 0
     pub_pc.addEventListener('iceconnectionstatechange', () => {
-      const state = pub_pc.iceConnectionState
-      console.log('ICE pub:', state)
-      if (state === 'failed' || state === 'disconnected') {
-        pub_pc.restartIce()
-      }
-    })
-    sub_pc.addEventListener('iceconnectionstatechange', () => {
-      const state = sub_pc.iceConnectionState
-      console.log('ICE sub:', state)
-      if (state === 'failed' || state === 'disconnected') {
-        sub_pc.restartIce()
-      }
+      if (pub_pc.iceConnectionState !== 'failed') return
+      const now = Date.now()
+      if (now - lastPubIceRestart < PUB_ICE_RESTART_COOLDOWN_MS) return
+      lastPubIceRestart = now
+      pub_pc.restartIce()
     })
 
     const caps = RTCRtpReceiver.getCapabilities('video')
@@ -148,8 +143,6 @@ export function useWebRTC(
     })
     pub_pc.addEventListener('datachannel', (e) => {
       const channel = e.channel
-      console.log('new msg in datcan')
-
       channel.onmessage = (msg) => {
         handleControl?.(msg)
       }
@@ -157,10 +150,9 @@ export function useWebRTC(
 
     let offering = false
     pub_pc.onnegotiationneeded = async () => {
-      if (offering) return
+      if (offering || pub_pc.signalingState !== 'stable') return
       offering = true
       try {
-        console.log('needed renegotiation')
         const sdp = await createOffer()
         if (sdp) sendOffer!(sdp)
       } catch (err) {
@@ -225,8 +217,6 @@ export function useWebRTC(
         }
       }
     }
-
-    console.log('need negotiation')
     return needsNegotiation
   }
 
@@ -256,14 +246,6 @@ export function useWebRTC(
       await pc.setRemoteDescription({ type: 'answer', sdp })
     } catch (err) {
       console.error('[useWebRTC] setRemoteDescription(answer) failed:', err)
-      // recover: Chrome replaces a pending offer when a new offer is applied,
-      // so a fresh offer unblocks the connection instead of staying stuck
-      try {
-        const sdp2 = await createOffer()
-        if (sdp2) sendOffer?.(sdp2)
-      } catch (retryErr) {
-        console.error('[useWebRTC] recovery offer failed:', retryErr)
-      }
       return
     }
     remoteDescSet.pub = true
@@ -376,7 +358,6 @@ export function useWebRTC(
     localTracksVideo.value = created.sender
 
     old?.stop()
-    console.log('old', old?.currentDirection)
   }
 
   /// switch video codec WITHOUT replacing the transceiver: stopping the old one

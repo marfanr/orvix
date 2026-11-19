@@ -6,6 +6,7 @@ use axum::extract::ws;
 use futures_util::stream::{SelectAll, Stream, StreamExt};
 use rtc::data_channel::RTCDataChannelId;
 use rtc::peer_connection::RTCPeerConnection;
+use rtc::peer_connection::transport::RTCIceCandidateInit;
 use rtc::rtp;
 use rtc::rtp_transceiver::RTCRtpSenderId;
 use rtc::sansio::Protocol;
@@ -24,7 +25,7 @@ use uuid::Uuid;
 use crate::peer::PeerType;
 use crate::peer::{
     cmd::PeerCommand,
-    constant::{CMD_BATCH, DEFAULT_TIMEOUT, MEDIA_BATCH},
+    constant::{CMD_BATCH, DEFAULT_TIMEOUT, MEDIA_BATCH, OFFER_TIMEOUT},
     inbound::InboundTrack,
     mux::{Mux, MuxInbound},
 };
@@ -73,9 +74,16 @@ pub(super) struct PeerDriver {
     pub(super) sub_msg_id: RTCDataChannelId,
     pub(super) inbound: HashMap<String, InboundTrack>,
     pub(super) outbound: HashMap<RTCRtpSenderId, OutboundTrack>,
+    pub(super) pub_remote_candidates: Vec<RTCIceCandidateInit>,
+    pub(super) sub_remote_candidates: Vec<RTCIceCandidateInit>,
     pub(super) media_rx: SelectAll<MediaReceiver>,
     pub(super) offer_outstanding: bool,
+    /// when the outstanding offer was sent, used to time out a lost answer
+    pub(super) offer_sent_at: Option<Instant>,
     pub(super) pending_renegotiation: bool,
+    /// consecutive server-initiated ICE restarts, reset once connected
+    pub(super) ice_restart_attempts: u32,
+    pub(super) last_ice_restart: Option<Instant>,
     pub(super) closing: bool,
     pub(super) room: Arc<RoomSfu>,
     pub(super) ws_sink: mpsc::Sender<ws::Message>,
@@ -127,6 +135,9 @@ impl PeerDriver {
             }
             if let Some(monitor) = self.monitor_deadline(now) {
                 deadline = deadline.min(monitor);
+            }
+            if let (true, Some(sent)) = (self.offer_outstanding, self.offer_sent_at) {
+                deadline = deadline.min(sent + OFFER_TIMEOUT);
             }
             let delay = deadline.saturating_duration_since(now);
 
@@ -186,6 +197,7 @@ impl PeerDriver {
                         debug!("conn {}: subscriber handle_timeout: {e}", self.conn_id);
                     }
                     self.monitor_tick(now).await;
+                    self.check_offer_timeout(now).await;
                 }
             }
         }

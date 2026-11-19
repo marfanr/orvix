@@ -39,13 +39,12 @@ export function useSignaling() {
     ws.send({ type: 'leave', room })
   }
 
-  // client pub <-> server sub
   const sendOffer = (offer: string) => {
-    ws.send({ type: 'offer', sdp: offer })
+    ws.send({ type: 'offer', sdp: offer, peer_type: 'SUBSCRIBER' })
   }
-
+g
   const sendAnswer = (answer: string) => {
-    ws.send({ type: 'answer', sdp: answer })
+    ws.send({ type: 'answer', sdp: answer, peer_type: 'PUBLISHER' })
   }
 
   return { ws, send, onMessage, join, answerRequest, leave, close, sendOffer, sendAnswer }

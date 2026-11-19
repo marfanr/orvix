@@ -332,9 +332,14 @@ async fn build_peer(
         sub_msg_id,
         inbound: HashMap::new(),
         outbound: HashMap::new(),
+        pub_remote_candidates: Vec::new(),
+        sub_remote_candidates: Vec::new(),
         media_rx: SelectAll::new(),
         offer_outstanding: false,
+        offer_sent_at: None,
         pending_renegotiation: false,
+        ice_restart_attempts: 0,
+        last_ice_restart: None,
         closing: false,
         room,
         ws_sink,
@@ -434,32 +439,17 @@ impl PeerDriver {
         match cmd {
             PeerCommand::Close => return false,
             PeerCommand::AnswerOffer { sdp, resp, pc_type } => {
-                let pc = match pc_type {
-                    PeerType::PUBLISHER => &mut self.publisher_pc,
-                    PeerType::SUBSCRIBER => &mut self.subscriber_pc,
-                };
-
-                let result = (|| -> Result<String, String> {
-                    let offer = RTCSessionDescription::offer(sdp.clone())
-                        .map_err(|e| format!("parse offer: {e}"))?;
-                    pc.set_remote_description(now, offer)
-                        .map_err(|e| format!("remote desc: {e}"))?;
-                    let answer = pc
-                        .create_answer(None)
-                        .map_err(|e| format!("create answer: {e}"))?;
-                    pc.set_local_description(now, answer.clone())
-                        .map_err(|e| format!("local desc: {e}"))?;
-
-                    Ok(answer.sdp)
-                })();
-
-                if let Ok(sdp) = &result {
-                    self.reset_outbound_cache();
-                    self.bind_ufrag_from(sdp, pc_type);
-                }
+                let result = self.answer_offer(now, sdp, pc_type);
                 let _ = resp.send(result);
             }
             PeerCommand::ApplyAnswer { sdp, resp } => {
+                let prev_ufrag = self
+                    .publisher_pc
+                    .remote_description()
+                    .and_then(|d| crate::util::ice_ufrag(&d.sdp).map(str::to_owned));
+                let next_ufrag = crate::util::ice_ufrag(&sdp).map(str::to_owned);
+                let restarted = prev_ufrag.is_some() && prev_ufrag != next_ufrag;
+
                 let result = (|| -> Result<(), String> {
                     let answer = RTCSessionDescription::answer(sdp)
                         .map_err(|e| format!("parse answer: {e}"))?;
@@ -474,6 +464,9 @@ impl PeerDriver {
                         let _ = resp.send(Err(e));
                     }
                     Ok(()) => {
+                        if restarted {
+                            self.readd_cached_candidates(PeerType::PUBLISHER);
+                        }
                         self.reset_outbound_cache();
                         let _ = resp.send(Ok(()));
                         debug!("conn {}: answer applied", self.conn_id);
@@ -495,8 +488,17 @@ impl PeerDriver {
                     PeerType::SUBSCRIBER => &mut self.subscriber_pc,
                 };
                 let result = pc
-                    .add_remote_candidate(init)
+                    .add_remote_candidate(init.clone())
                     .map_err(|e| format!("add candidate: {e}"));
+                if result.is_ok() {
+                    let cache = match pc_type {
+                        PeerType::PUBLISHER => &mut self.pub_remote_candidates,
+                        PeerType::SUBSCRIBER => &mut self.sub_remote_candidates,
+                    };
+                    if !cache.iter().any(|c| c.candidate == init.candidate) {
+                        cache.push(init);
+                    }
+                }
                 let _ = resp.send(result);
             }
             PeerCommand::Attach { track, mime, resp } => {
@@ -556,5 +558,61 @@ impl PeerDriver {
             }
         }
         true
+    }
+
+    fn answer_offer(
+        &mut self,
+        now: Instant,
+        sdp: String,
+        pc_type: PeerType,
+    ) -> Result<String, String> {
+        let pc = match pc_type {
+            PeerType::PUBLISHER => &self.publisher_pc,
+            PeerType::SUBSCRIBER => &self.subscriber_pc,
+        };
+        let prev_ufrag = pc
+            .remote_description()
+            .and_then(|d| crate::util::ice_ufrag(&d.sdp).map(str::to_owned));
+        let next_ufrag = crate::util::ice_ufrag(&sdp).map(str::to_owned);
+        let restarted = prev_ufrag.is_some() && prev_ufrag != next_ufrag;
+
+        let pc = match pc_type {
+            PeerType::PUBLISHER => &mut self.publisher_pc,
+            PeerType::SUBSCRIBER => &mut self.subscriber_pc,
+        };
+        let offer = RTCSessionDescription::offer(sdp).map_err(|e| format!("parse offer: {e}"))?;
+        pc.set_remote_description(now, offer)
+            .map_err(|e| format!("remote desc: {e}"))?;
+        let answer = pc
+            .create_answer(None)
+            .map_err(|e| format!("create answer: {e}"))?;
+        pc.set_local_description(now, answer.clone())
+            .map_err(|e| format!("local desc: {e}"))?;
+        let answer_sdp = answer.sdp;
+
+        self.reset_outbound_cache();
+        self.bind_ufrag_from(&answer_sdp, pc_type);
+
+        if restarted {
+            self.readd_cached_candidates(pc_type);
+        }
+
+        Ok(answer_sdp)
+    }
+
+    fn readd_cached_candidates(&mut self, pc_type: PeerType) {
+        let cached = match pc_type {
+            PeerType::PUBLISHER => self.pub_remote_candidates.clone(),
+            PeerType::SUBSCRIBER => self.sub_remote_candidates.clone(),
+        };
+        let pc = match pc_type {
+            PeerType::PUBLISHER => &mut self.publisher_pc,
+            PeerType::SUBSCRIBER => &mut self.subscriber_pc,
+        };
+        for init in cached {
+            if let Err(e) = pc.add_remote_candidate(init) {
+                debug!("conn {}: re-add remote candidate: {e}", self.conn_id);
+            }
+        }
     }
 }

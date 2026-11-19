@@ -2,12 +2,14 @@
 //
 // SPDX-License-Identifier: AGPL-3.0
 
+use crate::peer::constant::{ICE_RESTART_COOLDOWN, MAX_ICE_RESTARTS, OFFER_TIMEOUT};
 use crate::peer::driver::PeerDriver;
 use axum::extract::ws;
 use rtc::peer_connection::event::{RTCPeerConnectionEvent, RTCTrackEvent};
 use rtc::peer_connection::message::TaggedRTCMessage;
 use rtc::peer_connection::state::RTCPeerConnectionState;
 use rtc::sansio::Protocol;
+use std::time::Instant;
 use tracing::{debug, info, warn};
 
 impl PeerDriver {
@@ -40,13 +42,18 @@ impl PeerDriver {
                             ))
                             .await;
                     }
-                    RTCPeerConnectionEvent::OnConnectionStateChangeEvent(state) => {
-                        if state == RTCPeerConnectionState::Failed
-                            || state == RTCPeerConnectionState::Closed
-                        {
+                    RTCPeerConnectionEvent::OnConnectionStateChangeEvent(state) => match state {
+                        RTCPeerConnectionState::Connected => {
+                            self.ice_restart_attempts = 0;
+                        }
+                        RTCPeerConnectionState::Failed => {
+                            self.recover_publisher_ice().await;
+                        }
+                        RTCPeerConnectionState::Closed => {
                             self.closing = true;
                         }
-                    }
+                        _ => {}
+                    },
                     RTCPeerConnectionEvent::OnNegotiationNeededEvent => {
                         if self.offer_outstanding {
                             self.pending_renegotiation = true;
@@ -108,13 +115,18 @@ impl PeerDriver {
                             self.conn_id, e
                         );
                     }
-                    RTCPeerConnectionEvent::OnConnectionStateChangeEvent(state) => {
-                        if state == RTCPeerConnectionState::Failed
-                            || state == RTCPeerConnectionState::Closed
-                        {
+                    RTCPeerConnectionEvent::OnConnectionStateChangeEvent(state) => match state {
+                        RTCPeerConnectionState::Failed => {
+                            warn!(
+                                "conn {}: subscriber ICE failed, waiting for renegotiation",
+                                self.conn_id
+                            );
+                        }
+                        RTCPeerConnectionState::Closed => {
                             self.closing = true;
                         }
-                    }
+                        _ => {}
+                    },
                     RTCPeerConnectionEvent::OnTrack(RTCTrackEvent::OnOpen(init)) => {
                         // the client's publisher media arrives on this leg
                         info!(
@@ -174,6 +186,7 @@ impl PeerDriver {
                     warn!("conn {}: set_local_description: {e}", self.conn_id);
                 } else if let Some(desc) = self.publisher_pc.local_description() {
                     self.offer_outstanding = true;
+                    self.offer_sent_at = Some(Instant::now());
                     info!("conn {}: renegotiation offer generated", self.conn_id);
                     self.bind_ufrag_from(&desc.sdp, crate::peer::PeerType::PUBLISHER);
 
@@ -184,6 +197,58 @@ impl PeerDriver {
                 }
             }
             Err(e) => warn!("conn {}: publisher create_offer: {e}", self.conn_id),
+        }
+    }
+
+    pub(super) async fn check_offer_timeout(&mut self, now: Instant) {
+        if !self.offer_outstanding {
+            return;
+        }
+        let Some(sent) = self.offer_sent_at else {
+            return;
+        };
+        if now.duration_since(sent) < OFFER_TIMEOUT {
+            return;
+        }
+
+        warn!(
+            "conn {}: offer unanswered after {}ms, re-offering",
+            self.conn_id,
+            now.duration_since(sent).as_millis()
+        );
+        self.offer_outstanding = false;
+        self.offer_sent_at = None;
+        self.pending_renegotiation = false;
+        self.send_offer_to_client().await;
+    }
+
+    async fn recover_publisher_ice(&mut self) {
+        let now = Instant::now();
+        if let Some(last) = self.last_ice_restart
+            && now.duration_since(last) < ICE_RESTART_COOLDOWN
+        {
+            return;
+        }
+        if self.ice_restart_attempts >= MAX_ICE_RESTARTS {
+            warn!(
+                "conn {}: publisher ICE failed after {} restarts, closing",
+                self.conn_id, self.ice_restart_attempts
+            );
+            self.closing = true;
+            return;
+        }
+
+        self.ice_restart_attempts += 1;
+        self.last_ice_restart = Some(now);
+        warn!(
+            "conn {}: publisher ICE failed, restarting (attempt {})",
+            self.conn_id, self.ice_restart_attempts
+        );
+        self.publisher_pc.restart_ice();
+        if self.offer_outstanding {
+            self.pending_renegotiation = true;
+        } else {
+            self.send_offer_to_client().await;
         }
     }
 }

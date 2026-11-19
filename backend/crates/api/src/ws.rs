@@ -39,9 +39,15 @@ enum WsMsg {
     },
     Offer {
         sdp: String,
+        /// server leg this offer targets; omitted by older clients
+        #[serde(default)]
+        peer_type: Option<String>,
     },
     Answer {
         sdp: String,
+        /// server leg this answer targets; omitted by older clients
+        #[serde(default)]
+        peer_type: Option<String>,
     },
     Candidate {
         from: String,
@@ -382,14 +388,24 @@ async fn handle_socket(socket: WebSocket, _user_agent: String, state: ServerStat
                                         }
                                     };
                                 }
-                                Ok(WsMsg::Offer { sdp }) => {
-                                    if let Err(e) = WsMsg::handle_offer(&sdp, conn_id, &state, tx.clone()).await {
-                                        warn!("handle_offer: {e}");
+                                Ok(WsMsg::Offer { sdp, peer_type }) => {
+                                    // client pub_pc offers to the server subscriber leg
+                                    if matches!(peer_type.as_deref(), None | Some("SUBSCRIBER")) {
+                                        if let Err(e) = WsMsg::handle_offer(&sdp, conn_id, &state, tx.clone()).await {
+                                            warn!("handle_offer: {e}");
+                                        }
+                                    } else {
+                                        warn!("ignoring offer for unexpected leg {peer_type:?}");
                                     }
                                 }
-                                Ok(WsMsg::Answer { sdp }) => {
-                                    if let Err(e) = WsMsg::handle_answer(&sdp, conn_id, &state).await {
-                                        warn!("handle_answer: {e}");
+                                Ok(WsMsg::Answer { sdp, peer_type }) => {
+                                    // client sub_pc answers the server publisher leg
+                                    if matches!(peer_type.as_deref(), None | Some("PUBLISHER")) {
+                                        if let Err(e) = WsMsg::handle_answer(&sdp, conn_id, &state).await {
+                                            warn!("handle_answer: {e}");
+                                        }
+                                    } else {
+                                        warn!("ignoring answer for unexpected leg {peer_type:?}");
                                     }
                                 }
                                 Ok(WsMsg::Candidate { from, candidate, mid, line_index, username_fragment }) => {
