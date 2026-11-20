@@ -15,9 +15,10 @@ devnull = os.open(os.devnull, os.O_WRONLY)
 os.dup2(devnull, 2)
 os.close(devnull)
 
+import re
+
 import numpy as np
 from pywhispercpp.model import Model
-import re
 
 SAMPLE_RATE = 16000
 MIN_SAMPLES = 1600
@@ -28,6 +29,7 @@ BEAM = int(os.environ.get("WHISPER_BEAM", "2"))
 THREADS = int(os.environ.get("WHISPER_THREADS", "4"))
 ADAPTIVE_CTX = os.environ.get("WHISPER_ADAPTIVE_CTX", "1") == "1"
 CTX_FLOOR = int(os.environ.get("WHISPER_CTX_FLOOR", "384"))
+
 
 def read_exact(n: int):
     buf = bytearray()
@@ -69,7 +71,7 @@ def build_params(pcm_len: int) -> dict:
 
 
 def main() -> int:
-    model_name = os.environ.get("WHISPER_MODEL", "base.en")
+    model_name = os.environ.get("WHISPER_MODEL", "small.en")
     language = os.environ.get("WHISPER_LANG", "en") or "en"
     if model_name.endswith(".en") or ".en-" in model_name:
         language = "en"
