@@ -222,24 +222,33 @@ impl PublishedTrack {
 
         // TODO: is transcribt enable for specific user/peer
         let is_opus = self.kind == RtpCodecKind::Audio
-            && self.codec.load().mime_type.eq_ignore_ascii_case("audio/opus");
+            && self
+                .codec
+                .load()
+                .mime_type
+                .eq_ignore_ascii_case("audio/opus");
 
         if is_opus {
             let room = Arc::clone(&self.sender_peer.room);
             let rt = tokio::runtime::Handle::current();
 
             let asr = self.asr.get_or_init(|| {
-                Some(AsrHandle::spawn(move |text| {
+                Some(AsrHandle::spawn(move |transcript| {
                     let room = Arc::clone(&room);
+
                     let rt = rt.clone();
 
                     rt.spawn(async move {
+                        if let Some(ass) = room.assistant.load().as_ref() {
+                            ass.forward(transcript.clone()).await;
+                        }
+
                         _ = room
                             .broadcast_control(
                                 Uuid::nil(),
                                 &Transcript {
                                     event_type: "transcript",
-                                    transcript: text,
+                                    transcript,
                                 },
                             )
                             .await;

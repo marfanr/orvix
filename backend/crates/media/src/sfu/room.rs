@@ -2,10 +2,11 @@
 //
 // SPDX-License-Identifier: AGPL-3.0
 
+use crate::assistant::Assistant;
 use crate::sfu::room_peer::RoomPeer;
 use crate::sfu::svc::LayerSelector;
 use crate::sfu::track::{Output, PublishedTrack};
-use arc_swap::{ArcSwap, ArcSwapOption};
+use arc_swap::ArcSwapOption;
 use axum::extract::ws::Message;
 use dashmap::DashMap;
 use models;
@@ -29,6 +30,8 @@ pub struct RoomSfu {
     pub tracks: DashMap<Uuid, Vec<Arc<PublishedTrack>>>,
     pub recording: AtomicBool,
     pub pending_joins: AtomicUsize,
+    // for now, there is only one assistant in each room
+    pub assistant: ArcSwapOption<Assistant>,
 }
 
 pub struct JoinToken(Arc<RoomSfu>);
@@ -206,9 +209,6 @@ impl RoomSfu {
     }
 
     async fn attach(&self, t: &Arc<PublishedTrack>, sub_id: Uuid, peer: &RoomPeer) -> bool {
-        // Pending joiners live in `peers` so the owner can admit them, but they
-        // must not receive tracks before admission: their client has no
-        // participant entry yet and would drop the track/state forever.
         if !peer.is_admitted() {
             return false;
         }
@@ -217,8 +217,6 @@ impl RoomSfu {
         }
         let mime = t.codec.load().mime_type.clone();
 
-        // instructs the subscriber's peer driver to add a send track and renegotiate
-        // with the client; packets are thereafter fanned out via the returned queue
         let Ok(attached) = peer.peer.attach(t.media_track(), mime).await else {
             warn!("attach track to {sub_id}: peer driver unavailable");
             return false;
@@ -386,6 +384,7 @@ impl From<&models::room::Room> for RoomSfu {
             tracks: DashMap::new(),
             recording: AtomicBool::new(false),
             pending_joins: AtomicUsize::new(0),
+            assistant: ArcSwapOption::empty(),
         }
     }
 }
@@ -403,6 +402,7 @@ mod tests {
             tracks: DashMap::new(),
             recording: AtomicBool::new(false),
             pending_joins: AtomicUsize::new(0),
+            assistant: ArcSwapOption::empty(),
         }
     }
 

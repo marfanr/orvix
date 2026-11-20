@@ -17,6 +17,8 @@ bytes = { workspace = true }
 dashmap = { workspace = true }
 futures-util = { workspace = true }
 oxideav-bitstream = { workspace = true }
+oxideav-core = { workspace = true }
+oxideav-mkv = { workspace = true }
 rtc = { workspace = true }
 rtp = { workspace = true }
 sdp-types = { workspace = true }
@@ -25,3 +27,4 @@ sonic-rs = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 uuid = { workspace = true }
+common = { workspace = true }

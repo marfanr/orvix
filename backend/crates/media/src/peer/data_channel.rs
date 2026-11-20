@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: AGPL-3.0
 
-use crate::assistant;
+use crate::assistant::{self, Assistant};
 use crate::peer::constant::{FORWARD_RID, PLI_WINDOW};
 use crate::peer::driver::PeerDriver;
 use rtc::data_channel::RTCDataChannelMessage;
@@ -115,11 +115,18 @@ impl PeerDriver {
                 }
             }
             Ok(ControlMessage::InviteAi) => {
-                info!("invite ai on data chanel");
-                let room = self.room.clone();
-                tokio::task::spawn_local(async move {
-                    assistant::join_to_room(room).await;
-                });
+                if self.room.assistant.load().is_none() {
+                    info!("invite ai on data chanel");
+                    let new_assistant = Assistant::new(self.room.clone()).ok();
+                    let prev = self
+                        .room
+                        .assistant
+                        .compare_and_swap(&None::<Arc<Assistant>>, new_assistant);
+
+                    if prev.is_none() {
+                        info!("successed inviting AI into room");
+                    }
+                }
             }
             Err(e) => {
                 debug!("conn {conn_id}: control parse err: {e}");

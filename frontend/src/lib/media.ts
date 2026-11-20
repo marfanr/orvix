@@ -1,6 +1,9 @@
 import { useMeetingConfigStore } from '@/stores/meetingConfig'
 import { SupportedVideoCodec } from '@/types/video-call'
-import { storeToRefs } from 'pinia'
+
+const debug = (...args: unknown[]) => {
+  if (import.meta.env.DEV) console.log(...args)
+}
 
 export function mediaErrorMessage(error: unknown, kind: 'camera' | 'microphone') {
   const label = kind === 'camera' ? 'Camera' : 'Microphone'
@@ -41,7 +44,7 @@ export const preferCodec = async (
 ): Promise<void> => {
   const form = useMeetingConfigStore().form
   codec ??= SupportedVideoCodec.VP9
-  console.log(`sellected = ${kind}/${codec.toString()}`)
+  debug(`sellected = ${kind}/${codec.toString()}`)
   if (typeof RTCRtpSender.getCapabilities !== 'function') return
 
   const codecs = RTCRtpSender.getCapabilities(kind)?.codecs ?? []

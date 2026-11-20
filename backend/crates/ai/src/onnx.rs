@@ -99,6 +99,6 @@ pub(crate) fn opt_level() -> GraphOptimizationLevel {
         Ok("level1") => GraphOptimizationLevel::Level1,
         Ok("level2") => GraphOptimizationLevel::Level2,
         Ok("level3") => GraphOptimizationLevel::Level3,
-        _ => GraphOptimizationLevel::Level2,
+        _ => GraphOptimizationLevel::Level3,
     }
 }

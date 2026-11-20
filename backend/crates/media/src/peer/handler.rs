@@ -45,12 +45,18 @@ impl PeerDriver {
                     RTCPeerConnectionEvent::OnConnectionStateChangeEvent(state) => match state {
                         RTCPeerConnectionState::Connected => {
                             self.ice_restart_attempts = 0;
+                            self.publisher_connected = true
                         }
                         RTCPeerConnectionState::Failed => {
+                            self.publisher_connected = false;
                             self.recover_publisher_ice().await;
                         }
                         RTCPeerConnectionState::Closed => {
                             self.closing = true;
+                            self.publisher_connected = false;
+                        }
+                        RTCPeerConnectionState::Disconnected => {
+                            self.publisher_connected = false;
                         }
                         _ => {}
                     },

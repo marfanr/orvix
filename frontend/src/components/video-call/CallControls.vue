@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, type Component } from 'vue'
 import {
   BotIcon,
+  BotOffIcon,
   CameraIcon,
   CameraOffIcon,
   CircleDotIcon,
@@ -44,6 +45,7 @@ const activeActionClass = 'bg-primary/10 text-primary hover:bg-primary/15'
 const idleActionClass = 'bg-gray-100 text-gray-700 hover:bg-gray-200'
 
 const moreOpen = ref(false)
+const aiActive = ref(false)
 const moreButtonRef = ref<HTMLButtonElement | null>(null)
 const panelRef = ref<HTMLElement | null>(null)
 const popoverStyle = ref<Record<string, string>>({})
@@ -110,8 +112,9 @@ function onParticipantsClick() {
   membersPanel.toggle()
 }
 
-function onAiInviteClick() {
-  emit('send-control', JSON.stringify({ type: 'invite_ai' }))
+function onAiToggleClick() {
+  aiActive.value = !aiActive.value
+  emit('send-control', JSON.stringify({ type: aiActive.value ? 'invite_ai' : 'stop_ai' }))
 }
 
 interface MenuItem {
@@ -150,10 +153,12 @@ const menuItems = computed<MenuItem[]>(() => [
   },
   {
     key: 'ai',
-    label: 'Invite AI',
-    description: 'Invite the assistant to this room',
-    icon: BotIcon,
-    onSelect: onAiInviteClick,
+    label: aiActive.value ? 'Stop AI' : 'Invite AI',
+    description: aiActive.value
+      ? 'Remove the assistant from this room'
+      : 'Invite the assistant to this room',
+    icon: aiActive.value ? BotOffIcon : BotIcon,
+    onSelect: onAiToggleClick,
   },
 ])
 

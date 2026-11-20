@@ -271,8 +271,6 @@ impl WsMsg {
             .await
             .map_err(|e| format!("send answer: {e}"))?;
 
-        info!("new offer");
-
         // After initial offer/answer negotiation, attach any existing tracks from other peers
         room.attach_existing_tracks(conn_id, &peers).await;
 
@@ -460,7 +458,7 @@ async fn handle_socket(socket: WebSocket, _user_agent: String, state: ServerStat
     let room = state.conn_to_rooms.remove(&conn_id).map(|(_, room)| room);
 
     if let Some(room) = room {
-        println!("delete {} from room", &conn_id);
+        info!("delete {} from room", &conn_id);
         let username = room
             .peers
             .get(&conn_id)

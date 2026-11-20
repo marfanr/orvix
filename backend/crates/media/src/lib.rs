@@ -4,6 +4,7 @@
 
 pub mod assistant;
 pub mod peer;
+mod playback;
 pub mod sfu;
 pub mod util;
 mod ws;

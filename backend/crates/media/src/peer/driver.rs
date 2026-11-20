@@ -87,6 +87,7 @@ pub(super) struct PeerDriver {
     pub(super) closing: bool,
     pub(super) room: Arc<RoomSfu>,
     pub(super) ws_sink: mpsc::Sender<ws::Message>,
+    pub(super) publisher_connected: bool,
 }
 
 impl Drop for PeerDriver {
@@ -273,6 +274,10 @@ impl PeerDriver {
     }
 
     fn write_to_sender(&mut self, sender_id: RTCRtpSenderId, mut pkt: rtp::Packet) {
+        if !self.publisher_connected {
+            return;
+        }
+
         let Some(mut sender) = self.publisher_pc.rtp_sender(sender_id) else {
             return;
         };

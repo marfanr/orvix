@@ -46,6 +46,7 @@ export function useVideoCallRoom(getRoomParam: () => string | string[] | undefin
   )
 
   const onRemoteTrack = (e: RTCTrackEvent) => {
+    console.log("new track")
     const stream = e.streams[0] ?? new MediaStream([e.track])
     const streamId = stream.id
     const target =
@@ -248,7 +249,6 @@ export function useVideoCallRoom(getRoomParam: () => string | string[] | undefin
         // handle offer from server subscriber
         case 'answer': {
           await webrtc.setRemoteAnswer(data.sdp)
-          console.log('new answer')
           break
         }
 

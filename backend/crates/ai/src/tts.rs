@@ -6,7 +6,6 @@ use ort::{session::Session, value::Tensor};
 use std::{
     collections::HashMap,
     fs,
-    io::Write,
     path::Path,
     process::Command,
     sync::{Mutex, OnceLock},
@@ -20,7 +19,7 @@ const MAX_TOKENS: usize = 510;
 const MODEL_RATE: u32 = 24_000;
 const OPUS_RATE: u32 = 48_000;
 const OPUS_FRAME: usize = 960;
-const GAP_SAMPLES: usize = 2_400;
+const SAMPLES_PER_MS: usize = (MODEL_RATE / 1000) as usize;
 
 static SESSION: OnceLock<Mutex<Session>> = OnceLock::new();
 static TOKENIZER: OnceLock<KokoroTokenizer> = OnceLock::new();
@@ -119,31 +118,104 @@ fn get_phonemes(text: &str) -> Results<String> {
     }
 
     let raw = String::from_utf8(output.stdout)?;
-    Ok(raw.trim().to_string())
+    let joined = raw
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    Ok(joined)
 }
 
-fn split_sentences(text: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut cur = String::new();
+fn pause_ms(p: char) -> usize {
+    match p {
+        ',' => 120,
+        ';' | ':' => 200,
+        '.' => 280,
+        '!' | '?' => 320,
+        '…' => 450,
+        _ => 0,
+    }
+}
 
-    for ch in text.chars() {
-        cur.push(ch);
+fn normalize(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut dots = 0usize;
 
-        if matches!(ch, '.' | '!' | '?' | ';' | '\n') {
-            let t = cur.trim();
-            if !t.is_empty() {
-                out.push(t.to_string());
-            }
-            cur.clear();
+    for c in text.chars() {
+        if c == '.' {
+            dots += 1;
+            continue;
         }
+
+        if dots > 0 {
+            out.push(if dots >= 2 { '…' } else { '.' });
+            dots = 0;
+        }
+
+        out.push(c);
     }
 
-    let t = cur.trim();
-    if !t.is_empty() {
-        out.push(t.to_string());
+    if dots > 0 {
+        out.push(if dots >= 2 { '…' } else { '.' });
     }
 
     out
+}
+
+fn split_segments(text: &str) -> Vec<(String, Option<char>)> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut chars = text.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        let boundary =
+            pause_ms(c) > 0 && (c == '…' || chars.peek().map_or(true, |n| n.is_whitespace()));
+
+        if boundary {
+            out.push((cur.trim().to_string(), Some(c)));
+            cur.clear();
+        } else {
+            cur.push(c);
+        }
+    }
+
+    let tail = cur.trim();
+    if !tail.is_empty() {
+        out.push((tail.to_string(), None));
+    }
+
+    out
+}
+
+fn trim_silence(pcm: &mut Vec<f32>) {
+    const THRESH: f32 = 0.01;
+    const KEEP: usize = 15 * SAMPLES_PER_MS;
+
+    let first = pcm.iter().position(|s| s.abs() > THRESH).unwrap_or(0);
+    let last = pcm
+        .iter()
+        .rposition(|s| s.abs() > THRESH)
+        .map_or(pcm.len(), |i| i + 1);
+
+    let start = first.saturating_sub(KEEP);
+    let end = (last + KEEP).min(pcm.len());
+
+    pcm.truncate(end);
+    pcm.drain(..start);
+}
+
+/// Fade in/out singkat supaya sambungan antar chunk tidak klik.
+fn fade_edges(pcm: &mut [f32], ms: usize) {
+    let n = (ms * SAMPLES_PER_MS).min(pcm.len() / 2);
+
+    for i in 0..n {
+        let g = i as f32 / n as f32;
+        let j = pcm.len() - 1 - i;
+        pcm[i] *= g;
+        pcm[j] *= g;
+    }
 }
 
 fn infer(dir: &Path, tokens: &[i64], voice: &str) -> Results<Vec<f32>> {
@@ -226,32 +298,6 @@ fn upsample_2x(pcm: &[f32]) -> Vec<f32> {
     out
 }
 
-#[allow(dead_code)]
-fn write_wav(path: &str, rate: u32, pcm: &[f32]) -> Results<()> {
-    let data_len = (pcm.len() * 2) as u32;
-    let mut f = fs::File::create(path)?;
-
-    f.write_all(b"RIFF")?;
-    f.write_all(&(36 + data_len).to_le_bytes())?;
-    f.write_all(b"WAVEfmt ")?;
-    f.write_all(&16u32.to_le_bytes())?;
-    f.write_all(&1u16.to_le_bytes())?;
-    f.write_all(&1u16.to_le_bytes())?;
-    f.write_all(&rate.to_le_bytes())?;
-    f.write_all(&(rate * 2).to_le_bytes())?;
-    f.write_all(&2u16.to_le_bytes())?;
-    f.write_all(&16u16.to_le_bytes())?;
-    f.write_all(b"data")?;
-    f.write_all(&data_len.to_le_bytes())?;
-
-    for s in pcm {
-        let v = (s.clamp(-1.0, 1.0) * 32767.0) as i16;
-        f.write_all(&v.to_le_bytes())?;
-    }
-
-    Ok(())
-}
-
 fn encode_opus(pcm: &[f32]) -> Results<Vec<Vec<u8>>> {
     let mut encoder = opus::Encoder::new(OPUS_RATE, opus::Channels::Mono, opus::Application::Voip)?;
     encoder.set_bitrate(opus::Bitrate::Bits(32_000))?;
@@ -274,27 +320,60 @@ fn encode_opus(pcm: &[f32]) -> Results<Vec<Vec<u8>>> {
     Ok(packets)
 }
 
+fn silence_packets(ms: usize) -> Results<Vec<Vec<u8>>> {
+    if ms == 0 {
+        return Ok(Vec::new());
+    }
+
+    let silence = vec![0.0f32; ms * SAMPLES_PER_MS];
+    encode_opus(&upsample_2x(&silence))
+}
+
 pub fn synthesize(text: &str, voice: &str) -> Results<Vec<Vec<u8>>> {
     let dir = model_path()?.join("kokoro");
     let tokenizer = tokenizer(&dir)?;
 
-    let mut pcm: Vec<f32> = Vec::new();
+    let text = normalize(text);
+    let segments = split_segments(&text);
+    let trailing = segments.last().and_then(|(_, p)| *p);
 
-    for sentence in split_sentences(text) {
-        let phonemes = get_phonemes(&sentence)?;
-        let (tokens, dropped) = tokenizer.encode(&phonemes);
+    // Fonemisasi per segmen, tanda baca ditempel kembali ke fonem.
+    let mut parts: Vec<String> = Vec::with_capacity(segments.len());
+    let mut spoken = false;
 
-        println!("sentence: {sentence:?}");
-        println!("phonemes: {phonemes}");
-        println!("tokens: {} dropped: {dropped:?}", tokens.len());
+    for (body, punct) in &segments {
+        let mut ph = if body.is_empty() {
+            String::new()
+        } else {
+            get_phonemes(body)?
+        };
 
-        for chunk in tokens.chunks(MAX_TOKENS) {
-            let wave = infer(&dir, chunk, voice)?;
-            pcm.extend_from_slice(&wave);
+        if !ph.is_empty() {
+            spoken = true;
         }
 
-        pcm.extend(std::iter::repeat_n(0.0f32, GAP_SAMPLES));
+        if let Some(p) = punct {
+            ph.push(*p);
+        }
+
+        if !ph.is_empty() {
+            parts.push(ph);
+        }
     }
+
+    if !spoken {
+        return silence_packets(trailing.map_or(0, pause_ms));
+    }
+
+    let phonemes = parts.join(" ");
+    let (mut tokens, dropped) = tokenizer.encode(&phonemes);
+    tokens.truncate(MAX_TOKENS);
+
+    println!("text: {text:?}");
+    println!("phonemes: {phonemes}");
+    println!("tokens: {} dropped: {dropped:?}", tokens.len());
+
+    let mut pcm = infer(&dir, &tokens, voice)?;
 
     if pcm.is_empty() {
         return Err("tidak ada audio yang dihasilkan".into());
@@ -307,19 +386,36 @@ pub fn synthesize(text: &str, voice: &str) -> Results<Vec<Vec<u8>>> {
         pcm.len() as f32 / MODEL_RATE as f32
     );
 
+    trim_silence(&mut pcm);
+    fade_edges(&mut pcm, 4);
+
+    if let Some(p) = trailing {
+        pcm.resize(pcm.len() + pause_ms(p) * SAMPLES_PER_MS, 0.0);
+    }
+
     let pcm48 = upsample_2x(&pcm);
     let packets = encode_opus(&pcm48)?;
 
     Ok(packets)
 }
 
-pub fn test_onnx() -> Results<Vec<Vec<u8>>> {
+pub fn speak(text: String) -> Results<Vec<Vec<u8>>> {
     let start = Instant::now();
 
-    let packets = synthesize("hello world! whats going? huh???", "af_aoede")?;
+    let packets = synthesize(text.as_str(), "af")?;
 
     println!("opus packets: {}", packets.len());
     println!("finish tts on {} ms", start.elapsed().as_millis());
 
     Ok(packets)
+}
+
+pub fn warmup() -> Result<(), String> {
+    let start = Instant::now();
+
+    synthesize("Hello, this is a warm up sentence.", "af").map_err(|e| e.to_string())?;
+
+    println!("tts warmup done in {} ms", start.elapsed().as_millis());
+
+    Ok(())
 }

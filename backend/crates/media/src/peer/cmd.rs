@@ -343,6 +343,7 @@ async fn build_peer(
         closing: false,
         room,
         ws_sink,
+        publisher_connected: false,
     })
 }
 

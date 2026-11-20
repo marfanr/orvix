@@ -4,7 +4,7 @@
 
 use std::env;
 
-use ai::stt;
+use ai::{stt, tts};
 use api::metrics::init_metrics;
 use api::server::{ServerState, run_server};
 use common::utils::{init_keys, resolve_announce_ip};
@@ -61,6 +61,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     );
 
     init_metrics();
+    tokio::task::spawn_blocking(tts::warmup).await??;
 
     run_server(state, 8080).await?;
 
